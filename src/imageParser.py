@@ -1,7 +1,8 @@
+import random
 
 import requests
 from lxml import html
-
+import image_downloader
 
 
 
@@ -54,10 +55,10 @@ def enqueue_tweets(url_queue,img_queue):
             print(img_queue.qsize())
 
 def enqueue_image_url(tweet_url,img_queue):
-
     page = requests.get(tweet_url)
 
     doc = html.fromstring(page.content)
+
     try :
         img = doc.cssselect('meta[property="og:image"]')[0].get('content')
     except:
@@ -66,5 +67,6 @@ def enqueue_image_url(tweet_url,img_queue):
     if 'profile' in img:
         return
     else:
-        img_queue.put(img)
+        image_downloader.download_img(img,str(random.randint(1000000,10000000)))
+
         return
