@@ -15,34 +15,45 @@ def enqueue_tweets_proxy(url_queue, proxy_queue,trash_queue,img_queue):
         if n % 1000:
             print(n)
 
-def enqueue_image_url_proxy(tweet_url,proxy_queue,trash_queue,img_queue):
+def enqueue_image_url_proxy(tweet_url,proxy_queue,trash_queue):
     proxy_tries = 20
+    session = requests.Session()
+    session.trust_env = False  # Don't read proxy settings from OS
 
     if proxy_queue.empty():
         raise Exception('no proxies available!')
-    proxy = proxy_queue.get()
+    proxy = proxy_queue.get(block=True)
     page=""
-    for a in range(proxy_tries):
+    for a in range(proxy_tries+1):
         try:
-            page = requests.get(tweet_url,proxies=proxy)
+            page = session.get(tweet_url,proxies={"http": "http://" + proxy, "https": "https://" + proxy})
             break
         except:
-            trash_queue.put(proxy)
+            return
+            print('tried')
             if proxy_queue.empty():
                 raise Exception('no proxies available!')
-            proxy = proxy_queue.get()
+            proxy = proxy_queue.get(block=True)
             if a == proxy_tries:
                 print("Aborting download after %s tries" % proxy_tries)
                 return
             continue
-    doc = html.fromstring(page.content)
-    img = doc.cssselect('meta[property="og:image"]')[0].get('content')
-    proxy_queue.put(proxy)
+    try:
+        print('got it')
+        proxy_queue.put(proxy,block=True)
+        doc = html.fromstring(page.content)
+        img = doc.cssselect('meta[property="og:image"]')[0].get('content')
+
+    except:
+        print("error")
+        return
     if 'profile' in img:
         return
     else:
-        img_queue.put()
-        return
+
+        print("yasss")
+        name = tweet_url.split("/")[-1]
+        image_downloader.download_img(img, name,session,proxy)
 
 
 def enqueue_tweets(url_queue,img_queue):
@@ -54,7 +65,7 @@ def enqueue_tweets(url_queue,img_queue):
             print(n)
             print(img_queue.qsize())
 
-def enqueue_image_url(tweet_url,img_queue):
+def enqueue_image_url(tweet_url):
     page = requests.get(tweet_url)
 
     doc = html.fromstring(page.content)
@@ -62,11 +73,19 @@ def enqueue_image_url(tweet_url,img_queue):
     try :
         img = doc.cssselect('meta[property="og:image"]')[0].get('content')
     except:
-        print("no meta tag")
+        # with lock:
+        #     counter.value -= 1
+        return
+
         return
     if 'profile' in img:
+        # with lock:
+        #     counter.value -= 1
         return
     else:
-        image_downloader.download_img(img,str(random.randint(1000000,10000000)))
-
+        name = tweet_url.split("/")[-1]
+        image_downloader.download_img(img,name)
+        # with lock:
+        #     counter.value -= 1
+        # print("counter val %s" % counter.value)
         return
