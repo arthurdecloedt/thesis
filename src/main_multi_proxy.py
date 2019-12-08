@@ -28,14 +28,14 @@ if __name__ == '__main__':
     pJson = multiprocessing.Process(target=json_parser.get_tweet_queue,args=[file_name,url_queue])
 
     pJson.start()
-    pool = Pool(100)
+    pool = Pool(2)
 
     # start first url before entering loop
     counter = 0
     url = url_queue.get(block=True)
     pool.apply_async(imageParser.enqueue_image_url_proxy, (url,proxy_queue,trash_queue))
-    n = 0
-    while n < 2000:
+    n = 260000
+    while not url_queue.empty():
         url = url_queue.get(block=True)
         # a new url needs to be processed
         n+=1
@@ -48,9 +48,9 @@ if __name__ == '__main__':
     pool.close()
     pJson.terminate()
     pool.join()
-    x=0
-    while not proxy_queue.empty():
-        proxy_queue.get()
+   while not proxy_queue.empty():
+      x=0
+       proxy_queue.get()
         x+=1
     print(x)
     x=0

@@ -5,9 +5,11 @@ import imageParser
 import image_downloader
 import json_parser
 from queue import *
+from pathlib import Path
+import yappi
+import sys
 
-file_name = "../data/aapl.json"
-
+file_name = Path("data/TSLA.json")
 
 if __name__ == '__main__':
 
@@ -20,30 +22,47 @@ if __name__ == '__main__':
     pJson = multiprocessing.Process(target=json_parser.get_tweet_queue,args=[file_name,url_queue])
 
     pJson.start()
-
+    
     pool = Pool(100)
 
     # start first url before entering loop
     counter = multiprocessing.Value('i', 0)
-    no_meta_c = multiprocessing.Value('i', 0)
-    img_c = multiprocessing.Value('i', 0)
     c_lock = multiprocessing.Lock()
-    nm_lock = multiprocessing.Lock()
-    img_lock = multiprocessing.Lock()
     url = url_queue.get(block=True)
-    pool.apply_async(imageParser.enqueue_image_url,(url,img_queue))
+    
+    ap_as = pool.apply_async(imageParser.enqueue_image_url,(url,))
     n = 0
-    while n < 7000:
+    # for a in range(170000):
+    #     url = url_queue.get(block=True)
+    c = 0
+    
+    
+    while not (url_queue.empty()):
+        break
         url = url_queue.get(block=True)
         # a new url needs to be processed
         n+=1
-        with c_lock:
-            counter.value += 1
+        c+=1
         ap_as = pool.apply_async(imageParser.enqueue_image_url, (url,))
-        if counter.value >= 1000:
-            ap_as.get()
-            counter.value = 0
-            print('scrapes:{0}'.format(str(n)))
+        if c >= 1000:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+            print('scheduled:{0}'.format(str(n)))
+            for a in range(20):
+                ap_as.wait(60)
+                if ap_as.ready():
+                    break   
+                sys.stdout.write('\n')
+                sys.stdout.flush()
+                print("ran %s minutes already after completed submit" % a)
+                
+            c = 0
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+            print('performed:{0}'.format(str(n)))
+
+    print('terminated')
+    ap_as.get(240)
     pool.close()
     pJson.terminate()
     pool.join()
