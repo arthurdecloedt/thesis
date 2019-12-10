@@ -32,13 +32,14 @@ if __name__ == '__main__':
     
     ap_as = pool.apply_async(imageParser.enqueue_image_url,(url,))
     n = 0
-    # for a in range(170000):
-    #     url = url_queue.get(block=True)
+
+    ofset = 460000
+    for a in range(ofset):
+        url = url_queue.get(block=True)
     c = 0
-    
-    
-    while not (url_queue.empty()):
-        break
+    n=ofset
+        
+    while not (url_queue.empty() and n > ofset+5000):
         url = url_queue.get(block=True)
         # a new url needs to be processed
         n+=1

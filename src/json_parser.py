@@ -8,13 +8,15 @@ def get_tweet_queue(jsonfile,tweetqueue):
         n=0
         while True:
             line = ''
-            for a in range(14):
-                line= line +  file.readline().strip('\n').strip().replace(' ','')
-            print(line)    
+            for a in range(13):
+                line= file.readline()
             if not line:
                 break
+            line = line.strip('\n').strip()
+            url = (line.split(':')[1] + ':' +line.split(':')[2]).strip().strip("\"")
+            file.readline()
             # if n<450000:
             #     n+=1
             #     continue
-            permalink = json.loads(line)['permalink']
-            tweetqueue.put(permalink)
+            # permalink = json.loads(line)['permalink']
+            tweetqueue.put(url)

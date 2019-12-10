@@ -19,7 +19,7 @@ def download_img(imgurl, name):
         image_file = io.BytesIO(get.content)
         image = Image.open(image_file).convert('RGB')
         # with open("/media/r0587533/SNEAKER JR/outscraper/%s.jpg" % name, 'wb') as file:
-        with open("/dev/shm/scraper_out/%s.jpg" % name, 'wb') as file:
+        with open("/dev/shm/out_scraper_tsla/%s.jpg" % name, 'wb') as file:
             image.save(file,"JPEG", quality=85)
             file.flush()
             sys.stdout.write('*')
