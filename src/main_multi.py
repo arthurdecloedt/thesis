@@ -6,10 +6,12 @@ import image_downloader
 import json_parser
 from queue import *
 from pathlib import Path
-import yappi
 import sys
 
-file_name = Path("data/TSLA.json")
+
+import sys
+sourcefile = Path(sys.argv[1])
+destFolder = sys.argv[2]
 
 if __name__ == '__main__':
 
@@ -19,7 +21,7 @@ if __name__ == '__main__':
     proxy_queue = manager.Queue(60000)
     trash_queue = manager.Queue(60000)
     img_queue = manager.Queue(60000)
-    pJson = multiprocessing.Process(target=json_parser.get_tweet_queue,args=[file_name,url_queue])
+    pJson = multiprocessing.Process(target=json_parser.get_tweet_queue,args=[sourcefile,url_queue])
 
     pJson.start()
     
@@ -33,7 +35,7 @@ if __name__ == '__main__':
     ap_as = pool.apply_async(imageParser.enqueue_image_url,(url,))
     n = 0
 
-    ofset = 460000
+    ofset = 0
     for a in range(ofset):
         url = url_queue.get(block=True)
     c = 0
@@ -44,7 +46,7 @@ if __name__ == '__main__':
         # a new url needs to be processed
         n+=1
         c+=1
-        ap_as = pool.apply_async(imageParser.enqueue_image_url, (url,))
+        ap_as = pool.apply_async(imageParser.enqueue_image_url, (url,destFolder))
         if c >= 1000:
             sys.stdout.write('\n')
             sys.stdout.flush()
