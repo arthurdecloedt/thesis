@@ -1,0 +1,10 @@
+#!/bin/bash -l
+#PBS -l nodes=1:ppn=2
+#PBS -l pmem=50gb
+#PBS -l walltime=00:30:00
+#PBS -l partition=bigmem
+ulimit -c 0
+cd $PBS_O_WORKDIR
+
+conda activate thesis
+python main_preembed.py '/data/leuven/332/vsc33219/data/deepsentibank/export.npz' '/data/leuven/332/vsc33219/data/full/' '/data/leuven/332/vsc33219/data/pre_embed/'
