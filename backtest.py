@@ -7,13 +7,13 @@ import torch.optim as optim
 
 
 def backtest():
+    pass
 
 
 
 
 
 def train(container,epochs):
-
     net = container.net
     device = container.device
     dataloader = container.dataloader

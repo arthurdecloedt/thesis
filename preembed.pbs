@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #PBS -l nodes=1:ppn=2
 #PBS -l pmem=50gb
-#PBS -l walltime=00:30:00
+#PBS -l walltime=01:00:00
 #PBS -l partition=bigmem
 ulimit -c 0
 cd $PBS_O_WORKDIR
