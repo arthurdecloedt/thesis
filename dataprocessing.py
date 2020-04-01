@@ -53,12 +53,14 @@ class IdSampler(Sampler):
 def save_partition(n_partition, accstr, accnum, output):
     np.save(output + 'array_' + str(n_partition) + '_ids.npy', accstr)
     np.save(output + 'array_' + str(n_partition) + '_vals.npy', accnum)
-    print('saved: ' + output + 'array_' + str(n_partition) + '.npy')
+    lg.debug('saved: ' + output + 'array_' + str(n_partition) + '.npy')
 
 
 class multi_set(Dataset):
 
     def __init__(self, preembedfolder, jsonfile):
+        lg.debug('Starting initialization and preprocessing of multimodal dataset')
+        lg.info("using files %s and %s",preembedfolder,jsonfile)
         # We load the whole dataset, preembedded images and text this makes it a lot easier
         self.preem_dict_ids = {}
         # tuples containing borders of id range
@@ -72,11 +74,12 @@ class multi_set(Dataset):
         # arrays with id's of preembedded picturees
         self.init_imagefolder(preembedfolder)
         self.datedict = readjson(jsonfile)
+        lg.debug("finished initializing the dataset")
 
     def init_imagefolder(self, preembedfolder):
-        lg.info("starting preembed data processing")
+        lg.debug("starting preembed data processing")
         names = [f.name for f in os.scandir(preembedfolder) if f.is_file()]
-        lg.debug("got %s files", len(names))
+        lg.info("got %s files", len(names))
         for n in names:
             if n.contains('ids'):
                 s = n.split('_')
@@ -119,7 +122,7 @@ class multi_set(Dataset):
                 if loc.shape != (0,):
                     ems[loc[0]] = num_vals
         proc_val = np.zeros((len(vals), self.embedlen))
-        lg.debug("loading ANP embeddings, using top %s ANPs", top_nr)
+        lg.info("loading ANP embeddings, using top %s ANPs", top_nr)
         # Convert anp classification into emotion embedding
         for n in range(len(vals)):
             top_inds = np.argpartition(vals[n], -top_nr)[-top_nr:]
@@ -137,7 +140,7 @@ class multi_set(Dataset):
         return s
 
     def __getitem__(self, index):
-
+        lg.info("getting item: %s", index)
         sample = self.datedict[index]
 
         for (img_id, content) in sample:
