@@ -7,7 +7,7 @@ import sys
 
 from dataprocessing import *
 
-MainModel = imp.load_source("MainModel", "./export.py")
+MainModel = imp.load_source("MainModel", "./export_mvso.py")
 
 
 weight_file = sys.argv[1]
@@ -29,7 +29,7 @@ sampler = IdSampler(dataset)
 batchsize = 200
 dataloadr = DataLoader(dataset, batch_size=batchsize, shuffle=False, sampler=sampler)
 subdiv = 5000
-accnum = np.zeros((subdiv, 2089))
+accnum = np.zeros((subdiv, 4342))
 accstr = np.empty((subdiv, 1), dtype=np.dtype(np.int64))
 j = 0
 n_partition = 0

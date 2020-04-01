@@ -14,5 +14,5 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import backtest,dataprocessing,embed_nets
-
-
+import logging as lg
+lg.basicConfig(filename='example.log',level=lg.INFO,format='%(asctime)s %(levelname)s:%(message)s', datefmt='%m/%d/%Y %H:%M:%S')

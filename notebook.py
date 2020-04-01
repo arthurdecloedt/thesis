@@ -106,7 +106,8 @@ def get_Gen(tweetmap):
             imgid = n.split('/')[-1].split('.')[0]
             content = tweetmap[imgid][0]
             sent = analyser.polarity_scores(content)['compound']
-            sent_v[i] = sent
+            sentarr = [ sent['neg'] ,sent['neu'] ,sent['pos'] ,sent['compound']]
+
             i += 1
         yield [img], [sent_v]
 

@@ -15,9 +15,9 @@ class Pre_Net(nn.Module):
 
     def __init__(self):
         super(Pre_Net, self).__init__()
-        self.fc1 = nn.Linear(27, 27)
-        self.fc2 = nn.Linear(27, 10)
-        self.pool= nn.adaptive
+        self.fc1 = nn.Linear(28, 28)
+        self.fc2 = nn.Linear(28, 10)
+        self.pool = torch.nn.AdaptiveAvgPool1d(1)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -54,31 +54,31 @@ class Net_Container:
         self.criterion = criterion
         self.optimizer.zero_grad()
 
-    class Multimodal(Dataset):
-        def __init__(self, root='train'):
-            self.root = root
-            self.paths = [f.path for f in os.scandir(root) if f.is_file()]
-            names = [f.name for f in os.scandir(root) if f.is_file()]
+class Multimodal(Dataset):
+    def __init__(self, root='train'):
+        self.root = root
+        self.paths = [f.path for f in os.scandir(root) if f.is_file()]
+        names = [f.name for f in os.scandir(root) if f.is_file()]
 
-            self.ids = [f.split('.')[0] for f in names]
+        self.ids = [f.split('.')[0] for f in names]
 
-            self.ids.sort()
+        self.ids.sort()
 
-        def __len__(self):
-            # Here, we need to return the number of samples in this dataset.
-            return len(self.paths)
+    def __len__(self):
+        # Here, we need to return the number of samples in this dataset.
+        return len(self.paths)
 
-        def __getitem__(self, index):
+    def __getitem__(self, index):
 
-            return image, index
+        return image, index
 
-    class IdSampler(Sampler):
+class IdSampler(Sampler):
 
-        def __init__(self, data_source):
-            self.data_source = data_source
+    def __init__(self, data_source):
+        self.data_source = data_source
 
-        def __iter__(self):
-            return iter(self.data_source.ids)
+    def __iter__(self):
+        return iter(self.data_source.ids)
 
-        def __len__(self):
-            return len(self.data_source)
+    def __len__(self):
+        return len(self.data_source)
