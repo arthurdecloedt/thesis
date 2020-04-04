@@ -2,8 +2,13 @@ import logging as lg
 
 import dataprocessing
 
-lg.basicConfig(level=lg.DEBUG)
-preembed_folder = '/data/leuven/332/vsc33219/data/test_embed/'
-json_folder = '/data/leuven/332/vsc33219/data/aapl.json'
+lg.basicConfig(level=lg.INFO)
+import yaml
 
-test_set = dataprocessing.MultiSet(preembed_folder, json_folder)
+prefs = {}
+with open('resources/preferences.yaml') as f:
+    prefs = yaml.load(f, Loader=yaml.FullLoader)
+
+test_set = dataprocessing.MultiSet(prefs)
+for key, value in test_set.datedict.items():
+    print(key, len(value))

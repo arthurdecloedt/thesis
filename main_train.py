@@ -1,18 +1,38 @@
-import json
-import os
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image
-from torch.utils.data import Sampler, Dataset
-from torchvision import transforms
-import datetime
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import backtest,dataprocessing,embed_nets
 import logging as lg
-lg.basicConfig(filename='example.log',level=lg.INFO,format='%(asctime)s %(levelname)s:%(message)s', datefmt='%m/%d/%Y %H:%M:%S')
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import yaml
+from torch.utils.data import Sampler
+
+import backtest
+import dataprocessing
+import embed_nets
+
+logFormatter = lg.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+rootLogger = lg.getLogger()
+rootLogger.setLevel(lg.INFO)
+
+fileHandler = lg.FileHandler("train_test_2.log")
+fileHandler.setFormatter(logFormatter)
+rootLogger.addHandler(fileHandler)
+
+consoleHandler = lg.StreamHandler()
+consoleHandler.setFormatter(logFormatter)
+rootLogger.addHandler(consoleHandler)
+
+net = embed_nets.Pre_Net().double()
+net.train()
+with open('resources/preferences.yaml') as f:
+    prefs = yaml.load(f, Loader=yaml.FullLoader)
+trainset = dataprocessing.MultiSet(prefs)
+tsampler = dataprocessing.MultiSampler(trainset)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=4, sampler=tsampler)
+
+criterion = nn.MSELoss()
+optimizer = optim.SGD(net.parameters(), lr=0.001)
+
+cont = embed_nets.Net_Container(net, trainloader, optimizer, criterion)
+
+backtest.train(cont, 100)

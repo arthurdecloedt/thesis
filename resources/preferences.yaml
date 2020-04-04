@@ -1,0 +1,5 @@
+preembedfolder: '/data/leuven/332/vsc33219/data/pre_embed/'
+jsonfile: '/data/leuven/332/vsc33219/data/aapl.json'
+anp_file_n: '/data/leuven/332/vsc33219/data/english_label.json'
+em_file_n: '/data/leuven/332/vsc33219/data/ANP_emotion_mapping_english.csv'
+moments: 'resources/AAPL_ImpliedMoments'
