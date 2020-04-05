@@ -60,7 +60,7 @@ def save_partition(n_partition, accstr, accnum, output):
     lg.debug('saved: ' + output + 'array_' + str(n_partition) + '.npy')
 
 
-def parse_moments(momentfile, rescale=True):
+def parse_moments(momentfile, rescale=False):
     momentsel = 4
 
     moments = pd.read_csv(momentfile, index_col=0, usecols=[0, momentsel], parse_dates=True).dropna()
@@ -90,12 +90,21 @@ class MultiSet(Dataset):
         self.embedlen = 24
         self.analyser = SentimentIntensityAnalyzer()
         # arrays with id's of preembedded picturees
+        self.norms = np.ones(24)
+
         self.init_imagefolder(preembedfolder)
+
         self.date_arr, self.datedict = read_json_aapl(jsonfile, self.contig_ids)
 
         self.response_dates, self.response, self.scale = parse_moments(self.prefs['moments'])
-
+        self.training_idx, self.test_idx = [], []
         lg.info("finished initializing the dataset")
+
+    def create_valsplit(self, distr=0.8):
+        l = self.date_arr.shape[0]
+        n_train = int(l * distr)
+        indices = np.random.permutation(l)
+        self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
 
     def init_imagefolder(self, preembedfolder, contig=True):
         lg.info("starting preembed data processing")
@@ -140,10 +149,10 @@ class MultiSet(Dataset):
         inds = np.argsort(interm_contig_ids)
         interm_contig_ids = interm_contig_ids[inds]
         interm_contig_vals = interm_contig_vals[inds]
-
+        self.norms = np.linalg.norm(interm_contig_vals, axis=0)
+        interm_contig_vals = interm_contig_vals / self.norms
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
         self.contig_vals = np.ascontiguousarray(interm_contig_vals)
-
         lg.info("reallocation done ")
 
         # for u in unsorted:
@@ -195,7 +204,7 @@ class MultiSet(Dataset):
         return s
 
     def __getitem__(self, index):
-        # lg.debug("getting item: %s",index)
+        lg.debug("getting item: %s", index)
         date = self.date_arr[index]
         # lg.debug(date)
         sample = self.datedict[date]
@@ -203,12 +212,12 @@ class MultiSet(Dataset):
         j = 0
         for (img_id, content) in sample:
             sent = self.analyser.polarity_scores(content)
-            arr = np.empty(self.embedlen + 4)
+            arr = np.zeros(self.embedlen + 4)
             arr[:4] = [sent['neg'], sent['neu'], sent['pos'], sent['compound']]
 
             ind = self.contig_ids.searchsorted(img_id)
             if ind < self.contig_ids.shape[0] and self.contig_ids[ind] == img_id:
-                arr[4:] = self.contig_ids[index]
+                arr[4:] = self.contig_vals[index]
                 data[j] = arr
                 j += 1
             else:
@@ -230,7 +239,6 @@ class MultiSampler(torch.utils.data.Sampler):
 
     def __init__(self, data_source):
         super().__init__(data_source)
-        self.l = None
         self.data_source = data_source
         arr = self.data_source.date_arr
         lg.debug("sampler got %s dates inputside", len(arr))
@@ -239,20 +247,27 @@ class MultiSampler(torch.utils.data.Sampler):
         lg.info("sampler got %s dates responseside", len(rarr))
 
         _, self.inds, _ = np.intersect1d(arr, rarr, return_indices=True)
-
+        self.l = len(self.inds)
         lg.info("sampler inititiated with %s samples", len(self))
 
     def __iter__(self):
         return iter(np.random.permutation(self.inds))
 
     def __len__(self):
-        if self.l is None:
-            arr = self.data_source.date_arr
-            rarr = self.data_source.response_dates
-            _, inds, _ = np.intersect1d(arr, rarr, return_indices=True)
-            self.l = len(inds)
-
         return self.l
+
+
+class MultiSplitSampler(MultiSampler):
+
+    def __init__(self, data_source, train=True):
+        super().__init__(data_source)
+        inds = self.data_source.training_idx if train else self.data_source.test_idx
+        self.inds = np.intersect1d(self.inds, inds)
+        self.l = len(self.inds)
+        lg.info("split sampler inititiated with %s samples", len(self))
+
+    def __iter__(self):
+        return iter(np.random.permutation(self.inds))
 
 
 def read_json_aapl(jsonfile, contig_ids):
