@@ -14,7 +14,7 @@ logFormatter = lg.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.
 rootLogger = lg.getLogger()
 rootLogger.setLevel(lg.INFO)
 
-fileHandler = lg.FileHandler("train_test_val2.log")
+fileHandler = lg.FileHandler("train_test_val_batched.log")
 fileHandler.setFormatter(logFormatter)
 rootLogger.addHandler(fileHandler)
 
@@ -42,6 +42,10 @@ valloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=4, s
 criterion = nn.MSELoss()
 optimizer = optim.SGD(net.parameters(), lr=0.001)
 
+try:
+    writer.add_graph(net)
+except Exception:
+    pass
 cont = embed_nets.Net_Container(net, trainloader, optimizer, criterion, True, valloader, writer)
 
 cont.train(100)

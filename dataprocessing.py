@@ -66,7 +66,7 @@ def parse_moments(momentfile, rescale=False):
     moments = pd.read_csv(momentfile, index_col=0, usecols=[0, momentsel], parse_dates=True).dropna()
 
     dates = moments.index.to_pydatetime()
-    dates_np = np.array([d.date() for d in dates])
+    dates_np = np.array([np.datetime64(d.date()) for d in dates])
     mom_array = moments[moments.columns[0]].to_numpy()
 
     scale = 1
@@ -83,6 +83,7 @@ def parse_moments(momentfile, rescale=False):
 class MultiSet(Dataset):
 
     def __init__(self, prefs):
+        self.contig_dates = None
         self.prefs = prefs
         preembedfolder = prefs['preembedfolder']
         jsonfile = prefs['jsonfile']
@@ -99,10 +100,17 @@ class MultiSet(Dataset):
 
         self.init_imagefolder(preembedfolder)
 
-        self.date_arr, self.datedict = read_json_aapl(jsonfile, self.contig_ids)
+        self.read_json_aapl()
 
-        self.response_dates, self.response, self.scale, self.baselines = parse_moments(self.prefs['moments'], True)
+        self.resp_arr = np.empty(self.date_arr.shape)
+        response_dates, response, self.scale, self.baselines = parse_moments(self.prefs['moments'], True)
+
+        _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
+
+        self.resp_arr[d_inds] = response[r_inds]
         self.training_idx, self.test_idx = [], []
+        assert np.diff(self.contig_dates) >= 0
+
         lg.info("finished initializing the dataset")
 
     def create_valsplit(self, distr=0.8):
@@ -152,12 +160,16 @@ class MultiSet(Dataset):
             interm_contig_ids = np.concatenate((interm_contig_ids, preem_dict_ids[key]))
             interm_contig_vals = np.concatenate((interm_contig_vals, val), 0)
         inds = np.argsort(interm_contig_ids)
+        n = inds.shape[0]
         interm_contig_ids = interm_contig_ids[inds]
         interm_contig_vals = interm_contig_vals[inds]
         self.norms = np.linalg.norm(interm_contig_vals, axis=0)
         interm_contig_vals = interm_contig_vals / self.norms
+
+        self.contig_dates = np.empty(n, dtype='datetime64[D]')
+
+        self.contig_vals = np.ascontiguousarray(np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1))
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
-        self.contig_vals = np.ascontiguousarray(interm_contig_vals)
         lg.info("reallocation done ")
 
         # for u in unsorted:
@@ -212,36 +224,77 @@ class MultiSet(Dataset):
         lg.debug("getting item: %s", index)
         date = self.date_arr[index]
         # lg.debug(date)
-        sample = self.datedict[date]
-        data = np.empty((len(sample), self.embedlen + 4))
-        j = 0
-        for (img_id, content) in sample:
-            sent = self.analyser.polarity_scores(content)
-            arr = np.zeros(self.embedlen + 4)
-            arr[:4] = [sent['neg'], sent['neu'], sent['pos'], sent['compound']]
-
-            ind = self.contig_ids.searchsorted(img_id)
-            if ind < self.contig_ids.shape[0] and self.contig_ids[ind] == img_id:
-                arr[4:] = self.contig_vals[index]
-                data[j] = arr
-                j += 1
-            else:
-                lg.warning("tried to load tweet without img")
-
-        data = data[:j]
+        ind_0 = np.searchsorted(self.contig_dates, "left")
+        ind_n = np.searchsorted(self.contig_dates, 'right')
+        if ind_0 >= self.contig_vals.shape[0] or ind_n <= 0:
+            raise ValueError('date not found')
+        data = self.contig_vals[ind_0:ind_n]
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
-        resp_i = np.where(self.response_dates == date)
-        if len(resp_i) != 1:
-            lg.error("tried to load date without response var (or multiple ones)")
-            return data_tens, torch.tensor(0)
-        resp_t = torch.tensor(self.response[resp_i])
+        resp_t = torch.tensor(self.resp_arr[index])
         return data_tens, resp_t
+
+    def read_json_aapl(self, ):
+        # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
+        # "$date":"2016-04-12T17:10:12.000Z"},"retweets":0,"favorites":0,"content":"#Apple iPhone SE release date, price,
+        # specs and features: iPhone SE users report Bluetooth ... Read more: http://owler.us/aayzDR $ AAPL","geo":"",
+        # "mentions":"","hashtags":"#Apple","replyTo":"","id":"719905464880726018",
+        # "permalink":"https://twitter.com/computer_hware/status/719905464880726018"}
+        contig_ids = self.contig_ids
+        # check if we are running in text/image pair only
+        lg.info("starting json processing in only_img mode")
+        start_date = datetime.date(2011, 12, 29)
+        end_date = datetime.date(2019, 9, 20)
+        delta = end_date - start_date
+
+        date_arr = [start_date + datetime.timedelta(days=i) for i in range(delta.days + 1)]
+
+        date_arr_np = np.array([np.datetime64(d) for d in date_arr])
+        boolarr = np.zeros(date_arr_np.shape, dtype=np.bool_)
+        n_tweets = 0
+        n_fail = 0
+        skipped = 0
+
+        with open(self.prefs['jsonfile'], "r", encoding="utf-8") as file:
+            line = file.readline()
+            while line:
+                try:
+                    jline = json.loads(line)
+                    datestr = jline['date']['$date']
+                    datet = datetime.datetime.strptime(datestr, "%Y-%m-%dT%H:%M:%S.%fZ")
+                    id = int(jline['id'])
+                    content = jline['content']
+                    date = datet.date()
+                    loc = contig_ids.searchsorted(id)
+                    if loc < contig_ids.shape[0] and id == contig_ids[loc]:
+                        sent = self.analyser.polarity_scores(content)
+                        arr = np.array([sent['neg'], sent['neu'], sent['pos'], sent['compound']])
+                        self.contig_vals[loc, 24:] = arr
+                        n_date = np.datetime64(date)
+                        self.contig_dates[loc] = n_date
+                        boolarr[np.argwhere(date_arr_np == n_date)] = True
+                        n_tweets += 1
+                    skipped += 1
+
+                except Exception as e:
+                    lg.error(line)
+                    n_fail += 1
+                    raise e
+                finally:
+                    line = file.readline()
+        dates = date_arr_np.shape[0]
+        pos_inds = np.argwhere(boolarr).squeeze()
+        date_arr_np = date_arr_np[pos_inds]
+        n_null = dates - date_arr_np.shape[0]
+
+        lg.info("collected %s tweets with %s errors", n_tweets, n_fail)
+        lg.info("collected tweets on %s dates", (delta.days - n_null))
+        lg.info("deleted %s dates", n_null)
+        self.date_arr = date_arr_np
 
 
 class MultiSampler(torch.utils.data.Sampler):
     # data_source: MultiSet
-
     def __init__(self, data_source):
         super().__init__(data_source)
         self.data_source = data_source
@@ -260,83 +313,3 @@ class MultiSampler(torch.utils.data.Sampler):
 
     def __len__(self):
         return self.l
-
-
-class MultiSplitSampler(MultiSampler):
-
-    def __init__(self, data_source, train=True):
-        super().__init__(data_source)
-        inds = self.data_source.training_idx if train else self.data_source.test_idx
-        self.inds = np.intersect1d(self.inds, inds)
-        self.l = len(self.inds)
-        lg.info("split sampler inititiated with %s samples", len(self))
-
-    def __iter__(self):
-        return iter(np.random.permutation(self.inds))
-
-
-def read_json_aapl(jsonfile, contig_ids):
-    # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
-    # "$date":"2016-04-12T17:10:12.000Z"},"retweets":0,"favorites":0,"content":"#Apple iPhone SE release date, price,
-    # specs and features: iPhone SE users report Bluetooth ... Read more: http://owler.us/aayzDR $ AAPL","geo":"",
-    # "mentions":"","hashtags":"#Apple","replyTo":"","id":"719905464880726018",
-    # "permalink":"https://twitter.com/computer_hware/status/719905464880726018"}
-    only_img = False
-
-    # check if we are running in text/image pair only
-    if not (contig_ids is None):
-        only_img = True
-        lg.info("starting json processing in only_img mode")
-    else:
-        lg.info("starting json processing in full mode")
-    start_date = datetime.date(2011, 12, 29)
-    end_date = datetime.date(2019, 9, 20)
-    delta = end_date - start_date
-
-    date_arr = [start_date + datetime.timedelta(days=i) for i in range(delta.days + 1)]
-    date_arr_np = np.array(date_arr)
-    date_dict = dict.fromkeys(date_arr)
-    for k, _ in date_dict.items():
-        date_dict[k] = []
-    n_tweets = 0
-    n_fail = 0
-    skipped = 0
-
-    with open(jsonfile, "r", encoding="utf-8") as file:
-        line = file.readline()
-        while line:
-            try:
-                jline = json.loads(line)
-                datestr = jline['date']['$date']
-                datet = datetime.datetime.strptime(datestr, "%Y-%m-%dT%H:%M:%S.%fZ")
-                id = int(jline['id'])
-                content = jline['content']
-                date = datet.date()
-                if only_img:
-
-                    loc = contig_ids.searchsorted(id)
-                    if loc < contig_ids.shape[0] and id == contig_ids[loc]:
-                        date_dict[date].append((id, content))
-                        n_tweets += 1
-                    skipped += 1
-                else:
-                    date_dict[date].append((id, content))
-                    n_tweets += 1
-
-            except Exception as e:
-                lg.error(line)
-                n_fail += 1
-                raise e
-            finally:
-                line = file.readline()
-        n_null = 0
-
-        for date in date_arr:
-            if not date_dict[date]:
-                date_arr_np = date_arr_np[date_arr_np != date]
-                date_dict.pop(date)
-                n_null += 1
-    lg.info("collected %s tweets with %s errors", n_tweets, n_fail)
-    lg.info("collected tweets on %s dates", (delta.days - n_null))
-    lg.info("deleted %s dates", n_null)
-    return date_arr_np, date_dict
