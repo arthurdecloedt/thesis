@@ -68,11 +68,16 @@ def parse_moments(momentfile, rescale=False):
     dates = moments.index.to_pydatetime()
     dates_np = np.array([d.date() for d in dates])
     mom_array = moments[moments.columns[0]].to_numpy()
+
     scale = 1
     if rescale:
         scale = np.amax(mom_array)
         mom_array /= scale
-    return dates_np, mom_array, scale
+
+    mean = np.mean(mom_array)
+    median = np.median(mom_array)
+    lg.info("mean response: %s, median response: %s", mean, median)
+    return dates_np, mom_array, scale, (mean, median)
 
 
 class MultiSet(Dataset):
@@ -96,7 +101,7 @@ class MultiSet(Dataset):
 
         self.date_arr, self.datedict = read_json_aapl(jsonfile, self.contig_ids)
 
-        self.response_dates, self.response, self.scale = parse_moments(self.prefs['moments'])
+        self.response_dates, self.response, self.scale, self.baselines = parse_moments(self.prefs['moments'], True)
         self.training_idx, self.test_idx = [], []
         lg.info("finished initializing the dataset")
 

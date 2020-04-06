@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 from torch.utils.data import Sampler
+from torch.utils.tensorboard import SummaryWriter
 
 import dataprocessing
 import embed_nets
@@ -21,14 +22,17 @@ consoleHandler = lg.StreamHandler()
 consoleHandler.setFormatter(logFormatter)
 rootLogger.addHandler(consoleHandler)
 
-net = embed_nets.Pre_Net().double()
+net = embed_nets.Pre_Net_Text().double()
 net.train()
 with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
 trainset = dataprocessing.MultiSet(prefs)
-trainset.create_valsplit(0.75)
+trainset.create_valsplit(0.5)
 tsampler = dataprocessing.MultiSplitSampler(trainset)
 vsampler = dataprocessing.MultiSplitSampler(trainset, False)
+
+writer = SummaryWriter()
+
 # tsampler = dataprocessing.MultiSampler(trainset)
 # vsampler = dataprocessing.MultiSampler(trainset)
 
@@ -38,6 +42,6 @@ valloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=4, s
 criterion = nn.MSELoss()
 optimizer = optim.SGD(net.parameters(), lr=0.001)
 
-cont = embed_nets.Net_Container(net, trainloader, optimizer, criterion, True, valloader)
+cont = embed_nets.Net_Container(net, trainloader, optimizer, criterion, True, valloader, writer)
 
 cont.train(100)
