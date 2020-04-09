@@ -2,7 +2,7 @@ import logging as lg
 
 import dataprocessing
 
-lg.basicConfig(level=lg.INFO)
+lg.basicConfig(level=lg.DEBUG)
 import yaml
 
 prefs = {}

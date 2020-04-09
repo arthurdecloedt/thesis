@@ -3,10 +3,12 @@ import datetime
 import json
 import logging as lg
 import os
+from os.path import join
 
 import numpy as np
 import pandas as pd
 import torch
+import yaml
 from PIL import Image
 from PIL import ImageFile
 from torch.utils.data import Dataset, Sampler
@@ -92,11 +94,11 @@ class MultiSet(Dataset):
         # We load the whole dataset, preembedded images and text this makes it a lot easier
         self.contig_ids = None
         self.contig_vals = None
-
+        self.date_arr = None
         self.embedlen = 24
         self.analyser = SentimentIntensityAnalyzer()
         # arrays with id's of preembedded picturees
-        self.norms = np.ones(24)
+        self.norms = np.ones(self.embedlen)
 
         self.init_imagefolder(preembedfolder)
 
@@ -108,9 +110,13 @@ class MultiSet(Dataset):
         _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
 
         self.resp_arr[d_inds] = response[r_inds]
+        self.resp_inds = d_inds
         self.training_idx, self.test_idx = [], []
-        assert np.diff(self.contig_dates) >= 0
+        self.date_id = np.argsort(self.contig_dates)
 
+        self.contig_vals = np.ascontiguousarray(self.contig_vals[self.date_id])
+        self.contig_dates = np.ascontiguousarray(self.contig_dates[self.date_id])
+        assert np.all(self.contig_dates[:-1] <= self.contig_dates[1:])
         lg.info("finished initializing the dataset")
 
     def create_valsplit(self, distr=0.8):
@@ -118,6 +124,59 @@ class MultiSet(Dataset):
         n_train = int(l * distr)
         indices = np.random.permutation(l)
         self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
+
+    def create_temporal_valsplit(self, distr=0.8):
+        l = self.resp_inds.shape[0]
+        n_train = int(l * distr)
+        indices = np.arange(l)
+        self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
+
+    def save(self, path='/data/leuven/332/vsc33219/data/Multiset'):
+
+        np.save(join(path, 'contig_vals.npy'), self.contig_vals)
+        np.save(join(path, 'contig_dates.npy'), self.contig_dates)
+        np.save(join(path, 'contig_ids.npy'), self.contig_ids)
+
+        np.save(join(path, 'resp_inds.npy'), self.resp_inds)
+        np.save(join(path, 'resp_arr.npy'), self.resp_arr)
+
+        np.save(join(path, 'date_arr.npy'), self.date_arr)
+        np.save(join(path, 'date_id.npy'), self.date_id)
+        np.save(join(path, 'misc.npy'), [self.scale, self.embedlen])
+        np.save(join(path, 'norms.npy'), self.norms)
+
+    @classmethod
+    def from_file(cls, path='/data/leuven/332/vsc33219/data/Multiset'):
+
+        obj = cls.__new__(cls)
+        super(MultiSet, obj).__init__()
+        obj.contig_vals = np.load(join(path, 'contig_vals.npy'), allow_pickle=True)
+        obj.contig_dates = np.load(join(path, 'contig_dates.npy'), allow_pickle=True)
+        obj.contig_ids = np.load(join(path, 'contig_ids.npy'), allow_pickle=True)
+
+        obj.resp_inds = np.load(join(path, 'resp_inds.npy'), allow_pickle=True)
+        obj.resp_arr = np.load(join(path, 'resp_arr.npy'), allow_pickle=True)
+
+        obj.date_arr = np.load(join(path, 'date_arr.npy'), allow_pickle=True)
+        obj.date_id = np.load(join(path, 'date_id.npy'), allow_pickle=True)
+
+        obj.norms = np.load(join(path, 'norms.npy'), allow_pickle=True)
+
+        a = np.load(join(path, 'misc.npy'), allow_pickle=True)
+        obj.scale = a[0]
+        obj.embedlen = a[1]
+
+        mean = np.mean(obj.resp_arr[np.nonzero(obj.resp_arr)])
+        median = np.median(obj.resp_arr[np.nonzero(obj.resp_arr)])
+
+        obj.baselines = (mean, median)
+
+        obj.analyser = SentimentIntensityAnalyzer()
+
+        with open('resources/preferences.yaml') as f:
+            obj.prefs = yaml.load(f, Loader=yaml.FullLoader)
+
+        return obj
 
     def init_imagefolder(self, preembedfolder, contig=True):
         lg.info("starting preembed data processing")
@@ -168,7 +227,7 @@ class MultiSet(Dataset):
 
         self.contig_dates = np.empty(n, dtype='datetime64[D]')
 
-        self.contig_vals = np.ascontiguousarray(np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1))
+        self.contig_vals = np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1)
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
         lg.info("reallocation done ")
 
@@ -224,8 +283,8 @@ class MultiSet(Dataset):
         lg.debug("getting item: %s", index)
         date = self.date_arr[index]
         # lg.debug(date)
-        ind_0 = np.searchsorted(self.contig_dates, "left")
-        ind_n = np.searchsorted(self.contig_dates, 'right')
+        ind_0 = np.searchsorted(self.contig_dates, date, side="left")
+        ind_n = np.searchsorted(self.contig_dates, date, side='right')
         if ind_0 >= self.contig_vals.shape[0] or ind_n <= 0:
             raise ValueError('date not found')
         data = self.contig_vals[ind_0:ind_n]
@@ -298,13 +357,7 @@ class MultiSampler(torch.utils.data.Sampler):
     def __init__(self, data_source):
         super().__init__(data_source)
         self.data_source = data_source
-        arr = self.data_source.date_arr
-        lg.debug("sampler got %s dates inputside", len(arr))
-
-        rarr = self.data_source.response_dates
-        lg.info("sampler got %s dates responseside", len(rarr))
-
-        _, self.inds, _ = np.intersect1d(arr, rarr, return_indices=True)
+        self.inds = data_source.resp_inds
         self.l = len(self.inds)
         lg.info("sampler inititiated with %s samples", len(self))
 
@@ -313,3 +366,15 @@ class MultiSampler(torch.utils.data.Sampler):
 
     def __len__(self):
         return self.l
+
+
+class MultiSplitSampler(MultiSampler):
+    def __init__(self, data_source, train=True):
+        super().__init__(data_source)
+        inds = self.data_source.training_idx if train else self.data_source.test_idx
+        self.inds = np.intersect1d(self.inds, inds)
+        self.l = len(self.inds)
+        lg.info("split sampler inititiated with %s samples", len(self))
+
+    def __iter__(self):
+        return iter(np.random.permutation(self.inds))

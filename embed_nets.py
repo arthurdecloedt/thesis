@@ -8,10 +8,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 
-class Pre_Net(nn.Module):
-
+class Mixed_Net(nn.Module):
     def __init__(self):
-        super(Pre_Net, self).__init__()
+        super(Mixed_Net, self).__init__()
 
         self.c1 = nn.Conv1d(28, 10, 1)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
@@ -38,6 +37,45 @@ class Pre_Net(nn.Module):
     #     for s in size:
     #         num_features *= s
     #     return num_features
+
+
+class Pre_net(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.c1 = nn.Conv1d(28, 28, 1)
+        self.c2 = nn.Conv1d(28, 28, 1)
+        self.c3 = nn.Conv1d(28, 28, 1)
+        self.c4 = nn.Conv1d(28, 1, 1)
+        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, x):
+        xc = self.c1(x)
+        xc = F.relu(xc)
+        x = torch.add(x, xc)
+        xc = self.c2(x)
+        xc = F.relu(xc)
+
+        x = torch.add(x, xc)
+        xc = self.c3(x)
+        xc = F.relu(xc)
+        x = torch.add(x, xc)
+        x = self.c4(x)
+        x = F.relu(x)
+        x = self.avg_pool(x)
+        return x
+
+
+class Pooling_Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.c1 = nn.Conv1d(28, 28, 1)
+
+        self.pool1 = nn.MaxPool1d(10, 1, 0, 10, ceil_mode=True)
+        self.c2 = nn.Conv1d(28, 28, 1)
+        self.c3 = nn.Conv1d(28, 28, 1)
+        self.c4 = nn.Conv1d(28, 1, 1)
+        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
 
 
 class Pre_Net_Text(nn.Module):
@@ -108,6 +146,7 @@ class Net_Container:
             total_loss = 0.
             net.train()
             optimizer.zero_grad()
+            loss = None
             for i, data in enumerate(dataloader, 0):
                 inputs, resp = data[0].double(), data[1].double()
                 outputs = net(inputs)
@@ -122,6 +161,9 @@ class Net_Container:
                 else:
                     total_loss += loss
                 epoch_len += 1
+            if total_loss != 0.0:
+                loss = total_loss * 0.9 + loss * 0.1
+                loss.backward()
             lg.info('e: %d | %s training_loss: %.10f', epoch + 1, epoch_len, (running_loss / epoch_len))
             if self.tensorboard:
                 self.s_writer.add_scalar("Loss/Train", (running_loss / epoch_len), epoch + 1)
@@ -158,3 +200,4 @@ class Net_Container:
                         "median": (median_loss / val_size),
                         'zero': (zero_loss / val_size)
                     }, epoch + 1)
+                return
