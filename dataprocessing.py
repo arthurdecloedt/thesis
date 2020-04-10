@@ -378,3 +378,37 @@ class MultiSplitSampler(MultiSampler):
 
     def __iter__(self):
         return iter(np.random.permutation(self.inds))
+
+
+class Multi_Set_Cst(MultiSet):
+    def __init__(self, prefs):
+        super().__init__(prefs)
+
+        # ok so this is a bit convoluted
+        # bascially we want to split the datapoints as fairly as possible, and not into bins of 20
+        # getting the inds and counts of unique dates
+        vals, inds, cnts = np.unique(self.contig_dates, return_index=True, return_counts=True)
+        # preallocating binn arr
+        bins = np.zeros(self.contig_dates.shape, dtype='int64')
+        # the number of bins for each unique date
+        # we're underfilling when the count is not a multiple of 20 but above 30
+        binsnr = np.ceil(np.true_divide(cnts, 20, out=np.ones(cnts.shape), where=cnts >= 30))
+        # getting the the low binsize for all counts
+        bnsize_u = np.floor_divide(cnts, binsnr)
+        # getting the amount of thimes the low value will be repeated for every date
+        # the idea is that ( ubus_nr * bnsize_u ) + ((binsnr - ubus_nr ) * (bnsize +1) = cnts
+        ubus_nr = (cnts - (binsnr * (bnsize_u + 1))) / (2 * bnsize_u - 1)
+        counter = 0
+
+        dates = np.empty(np.sum(bnsize_u), dtype='datetime64')
+        for i in range(len(inds)):
+            #  geting an array that expresses the sizes of the bins
+            arr = np.repeat([bnsize_u[i], bnsize_u[i] + 1], [ubus_nr[i], cnts[i] - ubus_nr[i]])
+            # getting an array that expresses the bin nr for all dates in contig dates
+            bins[inds[i]:inds[i] + cnts[i]] = np.random.permutation(
+                np.repeat(np.arange(counter, counter + binsnr[i]), arr.astype('int64')))
+            # here we record the date belonging to a bin for efficient retrieval later
+            dates[counter:counter + binsnr[i]] = vals[i]
+            counter += binsnr[i]
+        self.bindates = np.ascontiguousarray(dates)
+        self.bins = np.ascontiguousarray(bins)
