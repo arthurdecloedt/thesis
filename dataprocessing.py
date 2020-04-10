@@ -47,6 +47,7 @@ class ImageDataSet(Dataset):
 class IdSampler(Sampler):
 
     def __init__(self, data_source):
+        super().__init__(data_source)
         self.data_source = data_source
 
     def __iter__(self):
@@ -178,7 +179,7 @@ class MultiSet(Dataset):
 
         return obj
 
-    def init_imagefolder(self, preembedfolder, contig=True):
+    def init_imagefolder(self, preembedfolder):
         lg.info("starting preembed data processing")
         names = [f.name for f in os.scandir(preembedfolder) if f.is_file()]
         lg.info("got %s files", len(names))

@@ -80,7 +80,7 @@ class Pooling_Net(nn.Module):
         self.name = name
 
     def forward(self, x):
-        if (x.shape[2] > 5):
+        if x.shape[2] > 5:
             xp = F.pad(x, (5, 5), 'circular')
         else:
             xp = F.pad(x, (5, 5), 'replicate')
@@ -90,7 +90,7 @@ class Pooling_Net(nn.Module):
 
         x = F.relu(self.c1(x))
 
-        if (x.shape[2] > 5):
+        if x.shape[2] > 5:
             xp = F.pad(x, (5, 5), 'circular')
         else:
             xp = F.pad(x, (5, 5), 'replicate')
@@ -99,7 +99,7 @@ class Pooling_Net(nn.Module):
         x = torch.cat((x, xp), 1)
         x = F.relu(self.c2(x))
 
-        if (x.shape[2] > 5):
+        if x.shape[2] > 5:
             xp = F.pad(x, (5, 5), 'circular')
         else:
             xp = F.pad(x, (5, 5), 'replicate')
