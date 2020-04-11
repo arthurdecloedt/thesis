@@ -15,6 +15,7 @@ class Mixed_Net(nn.Module):
         self.c1 = nn.Conv1d(28, 10, 1)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(1)
+        self.flatten = nn.res
         self.linear = nn.Linear(76, 10)
         self.out = nn.Linear(10, 1)
         self.name = name
@@ -172,7 +173,6 @@ class Net_Container:
         median = torch.tensor(self.dataloader.dataset.baselines[1])
         median_loss = 0.0
         zero_loss = 0.0
-
         for epoch in range(epochs):
 
             epoch_len = 0
@@ -201,7 +201,6 @@ class Net_Container:
             lg.info('e: %d | %s training_loss: %.10f', epoch + 1, epoch_len, (running_loss / epoch_len))
             if self.tensorboard:
                 self.s_writer.add_scalar("Loss/Train", (running_loss / epoch_len), epoch + 1)
-
             if self.validation:
                 optimizer.zero_grad()
                 # net.eval()
@@ -234,7 +233,6 @@ class Net_Container:
                         "median": (median_loss / val_size),
                         'zero': (zero_loss / val_size)
                     }, epoch + 1)
-                return
 
 
 class Multi_Net_Container(Net_Container):
