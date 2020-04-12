@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import dataprocessing
 import embed_nets
+import multiset
 
 # def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 #     log = file if hasattr(file, 'write') else sys.stderr
@@ -30,7 +31,7 @@ consoleHandler = lg.StreamHandler()
 consoleHandler.setFormatter(logFormatter)
 rootLogger.addHandler(consoleHandler)
 
-net = embed_nets.Mixed_Net().double()
+net = embed_nets.Pooling_Net().double()
 net.train()
 with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
@@ -39,7 +40,7 @@ with open('resources/preferences.yaml') as f:
 # trainset.save()
 lg.info("loading dataset")
 
-trainset = dataprocessing.Multi_Set_Binned(True, prefs=prefs)
+trainset = multiset.Multi_Set_Binned(True, prefs=prefs)
 # tests.inner.resp_arr = tests.inner.resp_arr * tests.inner.scale
 # tsampler = dataprocessing.MultiSplitSampler(trainset)
 # vsampler = dataprocessing.MultiSplitSampler(trainset,False)

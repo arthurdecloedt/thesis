@@ -71,12 +71,12 @@ class Pre_net(nn.Module):
 class Pooling_Net(nn.Module):
     def __init__(self, name="pooling_net"):
         super().__init__()
-        self.c1 = nn.Conv1d(56, 10, 1)
+        self.c1 = nn.Conv1d(56, 20, 1)
 
         self.pool1 = nn.AvgPool1d(11, 1, 0, ceil_mode=True)
-        self.c2 = nn.Conv1d(20, 10, 1)
-        self.c3 = nn.Conv1d(20, 10, 1)
-        self.c4 = nn.Conv1d(10, 1, 1)
+        self.c2 = nn.Conv1d(40, 10, 1)
+        self.c3 = nn.Conv1d(40, 10, 1)
+        self.c4 = nn.Conv1d(20, 1, 1)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         self.name = name
 
