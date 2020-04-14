@@ -95,6 +95,7 @@ class MultiBinSampler(Sampler):
         self.data_source = data_source
         self.inds = np.arange(data_source.c)
         self.train = True
+        self.len = data_source.c
 
     def get_val_sampler(self, distr=.8, temporal=True):
 
@@ -108,8 +109,10 @@ class MultiBinSampler(Sampler):
             val_sampler.inds = val_inds
             val_sampler.data_source = self.data_source
             val_sampler.train = False
+            val_sampler.len = self.data_source.c - dinds[cutoff]
             lg.info("Binsampler split to %s training samples and %s validation samples", dinds[cutoff],
                     self.data_source.c - dinds[cutoff])
+            self.len = dinds[cutoff]
             return val_sampler
         raise NotImplementedError
 
@@ -119,4 +122,4 @@ class MultiBinSampler(Sampler):
         return iter(np.random.permutation(self.inds))
 
     def __len__(self):
-        return self.data_source.c
+        return self.len

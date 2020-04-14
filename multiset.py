@@ -15,6 +15,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 def parse_moments(momentfile, rescale=False):
     momentsel = 4
+    lg.info("Using dtai mvix30 data")
 
     moments = pd.read_csv(momentfile, index_col=0, usecols=[0, momentsel], parse_dates=True).dropna()
 
@@ -33,36 +34,49 @@ def parse_moments(momentfile, rescale=False):
     return dates_np, mom_array, scale, (mean, median)
 
 
-def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shift=1):
+def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shift=0):
     vxaapl = pd.read_csv(aaplfile, index_col=0, usecols=[0, 4], parse_dates=True).dropna()
+    lg.info("Using cboe vxAAPL data")
 
     dates = vxaapl.index.to_pydatetime()
     dates_np = np.array([np.datetime64(d.date()) for d in dates])
     vxaapl = vxaapl[vxaapl.columns[0]].to_numpy()
-    dates_np = dates_np[:-1]
-    vxaapl = vxaapl[1:]
+    # we want to predict the vxaapl of the next day
     if lvix:
         vix = pd.read_csv(vixfile, index_col=0, usecols=[0, 4], parse_dates=True).dropna()
 
-        vdates = vix.index.to_pydatetime()[vix_shift:]
+        # skip first vix date
+        vdates = vix.index.to_pydatetime()
         vdates_np = np.array([np.datetime64(d.date()) for d in vdates])
         vix_array = vix[vix.columns[0]].to_numpy()
 
         i_dates, dind, vind = np.intersect1d(dates_np, vdates_np, return_indices=True)
-        vind = vind[1:] - 1
-        dind = dind[1:]
+        vind = vind[:-max(shift, vix_shift)] + vix_shift
+        dind = dind[:-max(shift, vix_shift)] + shift
+        i_dates = i_dates[:-max(shift, vix_shift)]
         vxaapl = vxaapl[dind]
+
         vix_array = vix_array[vind]
+        lg.info("mean response: %s, median response: %s", np.mean(vxaapl), np.median(vxaapl))
+
         return i_dates, vxaapl, 1, (np.mean(vxaapl), np.median(vxaapl)), vix_array
     # vxaapldiff = vxaapl[1:] - vxaapl[:-1]
     else:
+        dates_np = dates_np[:-shift]
+        vxaapl = vxaapl[shift:]
+        lg.info("mean response: %s, median response: %s", np.mean(vxaapl), np.median(vxaapl))
+
         return dates_np, vxaapl, 1, (np.mean(vxaapl), np.median(vxaapl))
 
 
 class MultiSet(Dataset):
 
-    def __init__(self, prefs):
+    def __init__(self, prefs, contig_resp=False):
+        self.vix_arr = None
+        self.vix = True
         self.contig_dates = np.array([])
+        self.contig_resp = None
+        self.cr = contig_resp
         self.prefs = prefs
         preembedfolder = prefs['preembedfolder']
         jsonfile = prefs['jsonfile']
@@ -80,20 +94,47 @@ class MultiSet(Dataset):
         self.init_imagefolder(preembedfolder)
 
         self.read_json_aapl()
-
+        if (True):
+            vals, counts = np.unique(self.contig_dates, return_counts=True)
+            ttl = np.sum(counts < 15)
+            vals = vals[counts < 10]
+            self.date_arr = self.date_arr[np.invert(np.isin(self.date_arr, vals))]
+            lg.info("rejected %s dates for size (cutoff was 15)", ttl)
         self.resp_arr = np.full(self.date_arr.shape, -1.)
-        response_dates, response, self.scale, self.baselines = parse_moments(self.prefs['moments'], False)
+        if self.vix:
+            response_dates, response, self.scale, self.baselines, vix_arr = parse_vix(
+                self.prefs['vxaapl'], False, lvix=True, vixfile=self.prefs['vix'])
+            _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
+            self.vix_arr = np.full(self.date_arr.shape, -1.)
 
-        _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
-
+            self.vix_arr[d_inds] = vix_arr[r_inds]
+        else:
+            response_dates, response, self.scale, self.baselines = parse_vix(
+                self.prefs['vxaapl'], False)
+            _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
         self.resp_arr[d_inds] = response[r_inds]
         self.resp_inds = d_inds
         self.training_idx, self.test_idx = [], []
         self.date_id = np.argsort(self.contig_dates)
-
         self.contig_vals = np.ascontiguousarray(self.contig_vals[self.date_id])
         self.contig_dates = np.ascontiguousarray(self.contig_dates[self.date_id])
+
+        if self.cr:
+            self.contig_resp = np.full(self.contig_dates.shape, -1.)
+            self.contig_usable = np.full(self.contig_dates.shape, False)
+            vals, c_inds, r_inds = np.intersect1d(self.contig_dates, response_dates, return_indices=True)
+
+            for i in range(len(c_inds)):
+                val = vals[i]
+                cl = c_inds[i]
+                cr = np.searchsorted(self.contig_dates, val, 'right')
+                self.contig_resp[cl:cr] = response[r_inds[i]]
+                self.contig_usable[cl:cr] = True
+
+            print(self.contig_resp.shape)
+
         assert np.all(self.contig_dates[:-1] <= self.contig_dates[1:])
+
         lg.info("finished initializing the dataset")
 
     def create_valsplit(self, distr=0.8):
@@ -202,7 +243,8 @@ class MultiSet(Dataset):
         self.norms = np.linalg.norm(interm_contig_vals, axis=0)
         # interm_contig_vals = interm_contig_vals / self.norms
 
-        self.contig_dates = np.empty(n, dtype='datetime64[D]')
+        # noinspection PyTypeChecker
+        self.contig_dates = np.empty(n, dtype='datetime64[D]', )
 
         self.contig_vals = np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1)
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
@@ -268,7 +310,15 @@ class MultiSet(Dataset):
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
         resp_t = torch.tensor(self.resp_arr[index])
-        return data_tens, resp_t
+        if self.vix:
+            vix_t = torch.tensor(self.vix_arr[index])
+            return data_tens, resp_t, vix_t
+
+        return data_tens, resp_t, None
+
+    def get_contig(self):
+        assert self.cr
+        return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
 
     def read_json_aapl(self, ):
         # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
@@ -336,8 +386,6 @@ class Multi_Set_Binned(Dataset):
         self.reshuffle = reshuffle
         lg.info("starting initialization binned dataset")
 
-        if prefs is None:
-            prefs = {}
         if load:
             if path == '':
                 self.inner = MultiSet.from_file()
@@ -353,7 +401,7 @@ class Multi_Set_Binned(Dataset):
         lg.info('binning values')
         vals, inds, cnts = np.unique(self.inner.contig_dates, return_index=True, return_counts=True)
         # preallocating binn arr
-        bins = np.zeros(self.inner.contig_dates.shape, dtype='int64')
+        bins = np.full(self.inner.contig_dates.shape, -1, dtype='int64')
         # the number of bins for each unique date
         # we're underfilling when the count is not a multiple of 20 but above 30
         binsnr = np.asarray(np.ceil(np.true_divide(cnts, 20, out=np.ones(cnts.shape), where=cnts >= 30)), dtype='int64')
@@ -361,7 +409,6 @@ class Multi_Set_Binned(Dataset):
         bnsize_u = np.asarray(np.floor_divide(cnts, binsnr), dtype='int64')
         # getting the amount of thimes the low value will be repeated for every date
         # the idea is that ( ubus_nr * bnsize_u ) + ((binsnr - ubus_nr ) * (bnsize +1) = cnts
-        # ubus_nr = (cnts - (binsnr * (bnsize_u + 1))) / (2 * bnsize_u - 1) -> fout?
         ubus_nr = (binsnr * (bnsize_u + 1)) - cnts
         counter = 0
         if reshuffle:
@@ -391,6 +438,7 @@ class Multi_Set_Binned(Dataset):
                 dates[counter:counter + binsnr[i]] = ind
                 counter += binsnr[i]
 
+        self.arrs = (binsnr, bnsize_u, ubus_nr, vals)
         self.bindates = np.ascontiguousarray(dates)
         self.bins = np.ascontiguousarray(bins)
         self.c = counter
@@ -417,11 +465,25 @@ class Multi_Set_Binned(Dataset):
         data = inner.contig_vals[sample_inds]
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
+        if self.inner.resp_arr[self.bindates[index]] == -1:
+            lg.error("tried to get a responsevar -1")
         resp_t = torch.tensor(self.inner.resp_arr[self.bindates[index]])
-        return data_tens, resp_t
+        if self.inner.vix:
+            vix_t = torch.tensor(self.inner.vix_arr[self.bindates[index]])
+            return data_tens, resp_t, vix_t
+        else:
+            return data_tens, resp_t, 0
+
+    @property
+    def cr(self):
+        return self.inner.cr
 
     @property
     def baselines(self):
+        return self.inner.baselines
+
+    @property
+    def vix(self):
         return self.inner.baselines
 
     def __len__(self) -> int:
