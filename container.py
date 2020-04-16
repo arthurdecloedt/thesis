@@ -1,10 +1,13 @@
 import logging as lg
 from typing import Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import sklearn as sk
 import torch
 import xgboost as xgb
+from bayes_opt import BayesianOptimization
+from matplotlib import cm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -13,13 +16,14 @@ from multiset import MultiSet
 
 class XG_Container:
     xgb: xgb.XGBRegressor
-    dataset: MultiSet
+    dataset: [MultiSet ,ContigSet]
+
 
     def __init__(self, dataset, xgb, split=0.8, temporal=False) -> None:
         self.dataset = dataset
         assert split <= 1
         self.split = split
-        assert self.dataset.cr
+        assert self.dataset.has_contig
         self.total_size = np.sum(self.dataset.contig_usable)
         self.train_size = int(self.total_size * self.split)
         self.val_size = self.total_size - self.train_size
@@ -44,6 +48,64 @@ class XG_Container:
         yv = y[self.v_inds]
 
         self.xgb.fit(xt, yt, eval_set=[(xv, yv)], verbose=True)
+
+    def cv_hyper_opt_grid(self, hyperparam_ranges=None, folds=10):
+
+        if hyperparam_ranges is None:
+            hyperparam_ranges = {'max_depth': (3, 10),
+                                 'n_estimators': (100, 700)
+                                 }
+        x, y = self.dataset.get_contig()
+
+        dtrain = xgb.DMatrix(data=x,label=y,nthread=2)
+
+        def bo_tune_xgb(max_depth, n_estimators):
+            params = {'max_depth': int(max_depth),
+                      'n_estimators': int(n_estimators),
+                      'subsample': 0.8,
+                      'eta': 0.1,
+                      'eval_metric': 'rmse'}
+            # Cross validating with the specified parameters in 5 folds and 70 iterations
+
+            cv_result = xgb.cv(params, dtrain, num_boost_round=70, nfold=folds)
+        # Return the negative RMSE
+            return -1.0 * cv_result['test-rmse-mean'].iloc[-1]
+
+
+        xgb_bo = BayesianOptimization(bo_tune_xgb, hyperparam_ranges)
+        self.bo = xgb_bo
+
+        xgb_bo.maximize(n_iter=10, init_points=10, acq='ei')
+
+        x_obs = np.array([res["params"].values() for res in xgb_bo.res])
+        y_obs = np.array([[res["target"]] for res in xgb_bo.res])
+        xgb_bo._gp.fit(x_obs, y_obs)
+
+        n_params = len(hyperparam_ranges.keys())
+        n_res = len(xgb_bo.res)
+        keys = xgb_bo.res[0]['params'].keys()
+        grid_res = 100
+        spaces = []
+        for a in range(n_params):
+            h_range = hyperparam_ranges[keys[a]]
+            spaces.append(np.linspace(h_range[0],h_range[1],num=grid_res))
+
+        grids = np.meshgrid(*spaces)
+        gr_shape = grids[0].shape
+        grids_e = (np.expand_dims(g,-1) for g in grids)
+        grid = np.concatenate(grids_e,-1)
+        grid.reshape((-1,n_params))
+
+        mu, sigma = xgb_bo._gp.predict(grid, return_std=True)
+        mu_r =  np.reshape(mu,gr_shape)
+        sigma_r = np.reshape(sigma,gr_shape)
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
+        ax.plot_surface(grids[0], grids[1], mu_r, label='Prediction',cmap=cm.coolwarm)
+        ax.scatter(x_obs[0],x_obs[1],y_obs)
+
+        ax.legend()
 
     def results_tb(self, writer=SummaryWriter()):
         x, y = self.dataset.get_contig()

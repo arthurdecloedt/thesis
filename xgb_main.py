@@ -42,5 +42,6 @@ xgb = xgboost.XGBRegressor()
 cont = XG_Container(trainset, xgb, 0.8, False)
 writer = SummaryWriter()
 
-cont.train()
-cont.results_tb(writer)
+cont.cv_hyper_opt_grid(None)
+# cont.train()
+# cont.results_tb(writer)

@@ -4,16 +4,10 @@ import traceback
 import warnings
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import yaml
-from torch.utils.data import Sampler
 from torch.utils.tensorboard import SummaryWriter
 
-import container
-import dataprocessing
 import embed_nets
-import multiset
 
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
@@ -49,26 +43,30 @@ lg.info("loading dataset")
 # tsampler = dataprocessing.MultiBinSampler(trainset)
 # vsampler = tsampler.get_val_sampler(.8)
 
-trainset = multiset.MultiSet(prefs)
-trainset.create_valsplit(.8)
-tsampler = dataprocessing.MultiSplitSampler(trainset, True)
-vsampler = dataprocessing.MultiSplitSampler(trainset, False)
+# trainset = multiset.MultiSet(prefs)
+# trainset.create_valsplit(.8)
+# tsampler = dataprocessing.MultiSplitSampler(trainset, True)
+# vsampler = dataprocessing.MultiSplitSampler(trainset, False)
 
 writer = SummaryWriter()
 
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=5, sampler=tsampler)
-valloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=5, sampler=vsampler)
+# trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=5, sampler=tsampler)
+# valloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=5, sampler=vsampler)
+#
+# criterion = nn.MSELoss()
+# optimizer = optim.SGD(net.parameters(), lr=0.0001)
 
-criterion = nn.MSELoss()
-optimizer = optim.SGD(net.parameters(), lr=0.0001)
+# data, resp, _ = next(iter(trainloader))
+# while data.shape[2] < 10:
+#     data, resp, _ = next(iter(trainloader))
+# writer.add_graph(net, data)
 
-data, resp, _ = next(iter(trainloader))
-while data.shape[2] < 10:
-    data, resp, _ = next(iter(trainloader))
+data = torch.ones((1, 28, 50)).double()
 writer.add_graph(net, data)
+
 # optimizers = [optim.SGD(n.parameters(), lr=0.0001) for n in nets]
 
-cont = container.Net_Container(net, trainloader, optimizer, criterion, True, valloader, s_writer=writer, vix=True)
-#
-cont.train(200)
+# cont = container.Net_Container(net, trainloader, optimizer, criterion, True, valloader, s_writer=writer, vix=True)
+# #
+# cont.train(200)
 # # m_cont = embed_nets.Multi_Net_Container(nets, trainloader, optimizers, criterion, True, valloader, writer)

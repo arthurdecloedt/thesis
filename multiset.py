@@ -10,7 +10,23 @@ import pandas as pd
 import torch
 import yaml
 from torch.utils.data import Dataset
+from torch.utils.tensorboard import SummaryWriter
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+
+class ContigSet:
+
+    def __init__(self, path='/data/leuven/332/vsc33219/data/Multiset') -> None:
+        super().__init__()
+
+        self.contig_vals = np.load(join(path, 'contig_vals.npy'), allow_pickle=True)
+        self.contig_resp = np.load(join(path, 'contig_resp.npy'), allow_pickle=True)
+        self.contig_usable = np.load(join(path, 'contig_usable.npy'), allow_pickle=True)
+        self.has_contig = True
+
+    def get_contig(self):
+        assert self.has_contig
+        return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
 
 
 def parse_moments(momentfile, rescale=False):
@@ -76,7 +92,7 @@ class MultiSet(Dataset):
         self.vix = True
         self.contig_dates = np.array([])
         self.contig_resp = None
-        self.cr = contig_resp
+        self.has_contig = contig_resp
         self.prefs = prefs
         preembedfolder = prefs['preembedfolder']
         jsonfile = prefs['jsonfile']
@@ -119,7 +135,7 @@ class MultiSet(Dataset):
         self.contig_vals = np.ascontiguousarray(self.contig_vals[self.date_id])
         self.contig_dates = np.ascontiguousarray(self.contig_dates[self.date_id])
 
-        if self.cr:
+        if self.has_contig:
             self.contig_resp = np.full(self.contig_dates.shape, -1.)
             self.contig_usable = np.full(self.contig_dates.shape, False)
             vals, c_inds, r_inds = np.intersect1d(self.contig_dates, response_dates, return_indices=True)
@@ -148,6 +164,12 @@ class MultiSet(Dataset):
         n_train = int(l * distr)
         indices = np.arange(l)
         self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
+
+    def save_contig(self, path='/data/leuven/332/vsc33219/data/Multiset'):
+        np.save(join(path, 'contig_vals.npy'), self.contig_vals)
+        np.save(join(path, 'contig_resp.npy'), self.contig_resp)
+        np.save(join(path, 'contig_usable.npy'), self.contig_usable)
+        lg.info('saved contig array')
 
     def save(self, path='/data/leuven/332/vsc33219/data/Multiset'):
 
@@ -283,11 +305,12 @@ class MultiSet(Dataset):
         lg.debug("loading ANP embeddings, using top %s ANPs", top_nr)
         # Convert anp classification into emotion embedding
         lg.debug(vals.shape)
+        ind = -top_nr
+
         for n in range(len(vals)):
-            ind = -top_nr
             top_inds = np.argpartition(vals[n], ind)[ind:]
 
-            proc_val[n] = np.max(ems[top_inds], axis=0)
+            proc_val[n] = np.mean(ems[top_inds], axis=0)
             # for ti in top_inds:
             #     proc_val[n] += ems[ti]
         return proc_val
@@ -316,8 +339,18 @@ class MultiSet(Dataset):
 
         return data_tens, resp_t, None
 
+    def log_embedding(self, writer: SummaryWriter, dim=5000):
+
+        assert self.has_contig
+        vals = self.contig_vals[self.contig_usable][:dim]
+        vals = vals.transpose((1, 0))
+        data_tens = torch.from_numpy(vals)
+
+        writer.add_embedding(data_tens, global_step=0, tag='MVSO_top5_avg')
+        writer.flush()
+
     def get_contig(self):
-        assert self.cr
+        assert self.has_contig
         return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
 
     def read_json_aapl(self, ):
@@ -476,7 +509,7 @@ class Multi_Set_Binned(Dataset):
 
     @property
     def cr(self):
-        return self.inner.cr
+        return self.inner.has_contig
 
     @property
     def baselines(self):

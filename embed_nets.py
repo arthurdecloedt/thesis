@@ -86,33 +86,23 @@ class Pooling_Net(nn.Module):
     def forward(self, x):
         xo = x
         xp = F.pad(x, (5, 5), 'circular')
-        xpa = self.pool_a(xp)
-        xpm = self.pool_a(xp)
-        x = torch.cat((x, xpa, xpm), 1)
+        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
         x = F.relu(self.c1(x))
 
         xp = F.pad(x, (5, 5), 'circular')
-        xpa = self.pool_a(xp)
-        xpm = self.pool_a(xp)
-        x = torch.cat((x, xpa, xpm), 1)
+        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
         x = F.relu(self.c2(x))
 
         xp = F.pad(x, (5, 5), 'circular')
-        xpa = self.pool_a(xp)
-        xpm = self.pool_a(xp)
-        x = torch.cat((x, xpa, xpm), 1)
+        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
         x = F.relu(self.c3(x))
 
         xp = F.pad(x, (5, 5), 'circular')
-        xpa = self.pool_a(xp)
-        xpm = self.pool_a(xp)
-        x = torch.cat((x, xpa, xpm), 1)
+        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
         x = F.relu(self.c4(x))
 
         x = torch.cat((x, xo), 1)
-        xa = self.avg_pool(x)
-        xm = self.max_pool(x)
-        x = torch.cat((xa.squeeze(), xm.squeeze()))
+        x = torch.cat((self.avg_pool(x).squeeze(), self.max_pool(x).squeeze()))
         x = self.linear(x)
         x = F.relu(x)
         x = self.out(x)
