@@ -266,7 +266,7 @@ class MultiSet(Dataset):
         # interm_contig_vals = interm_contig_vals / self.norms
 
         # noinspection PyTypeChecker
-        self.contig_dates = np.empty(n, dtype='datetime64[D]', )
+        self.contig_dates = np.empty(n, dtype='datetime64[D]')
 
         self.contig_vals = np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1)
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
@@ -521,3 +521,4 @@ class Multi_Set_Binned(Dataset):
 
     def __len__(self) -> int:
         return self.inner.__len__()
+

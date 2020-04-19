@@ -11,7 +11,7 @@ from matplotlib import cm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from multiset import MultiSet
+from multiset import MultiSet, ContigSet
 
 
 class XG_Container:
@@ -49,63 +49,84 @@ class XG_Container:
 
         self.xgb.fit(xt, yt, eval_set=[(xv, yv)], verbose=True)
 
-    def cv_hyper_opt_grid(self, hyperparam_ranges=None, folds=10):
+    def cv_hyper_opt_bayesian(self, hyperparam_ranges=None, folds=5, s_writer=SummaryWriter()):
 
         if hyperparam_ranges is None:
-            hyperparam_ranges = {'max_depth': (3, 10),
+            hyperparam_ranges = {'max_depth': (3, 20),
                                  'n_estimators': (100, 700)
                                  }
         x, y = self.dataset.get_contig()
 
-        dtrain = xgb.DMatrix(data=x,label=y,nthread=2)
+        dtrain = xgb.DMatrix(data=x, label=y, nthread=2)
 
         def bo_tune_xgb(max_depth, n_estimators):
             params = {'max_depth': int(max_depth),
                       'n_estimators': int(n_estimators),
                       'subsample': 0.8,
                       'eta': 0.1,
-                      'eval_metric': 'rmse'}
+                      'eval_metric': 'rmse',
+                      'nthread': 20}
             # Cross validating with the specified parameters in 5 folds and 70 iterations
 
             cv_result = xgb.cv(params, dtrain, num_boost_round=70, nfold=folds)
-        # Return the negative RMSE
+            # Return the negative RMSE
             return -1.0 * cv_result['test-rmse-mean'].iloc[-1]
-
 
         xgb_bo = BayesianOptimization(bo_tune_xgb, hyperparam_ranges)
         self.bo = xgb_bo
 
-        xgb_bo.maximize(n_iter=10, init_points=10, acq='ei')
+        xgb_bo.maximize(n_iter=0, init_points=10, acq='ei')
+        fig, fig2 = self.create_figures(hyperparam_ranges, xgb_bo)
 
-        x_obs = np.array([res["params"].values() for res in xgb_bo.res])
+        s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
+        s_writer.add_figure("predicted_function", fig, global_step=0)
+
+        for a in range(100):
+            xgb_bo.maximize(n_iter=2, acq='ei')
+            fig, fig2 = self.create_figures(hyperparam_ranges, xgb_bo)
+
+            s_writer.add_figure("predicted_function_scatter", fig2, global_step=a + 1)
+            s_writer.add_figure("predicted_function", fig, global_step=a + 1)
+
+    def create_figures(self, hyperparam_ranges, xgb_bo):
+        x_obs = np.array([list(res["params"].values()) for res in xgb_bo.res])
         y_obs = np.array([[res["target"]] for res in xgb_bo.res])
         xgb_bo._gp.fit(x_obs, y_obs)
-
         n_params = len(hyperparam_ranges.keys())
         n_res = len(xgb_bo.res)
-        keys = xgb_bo.res[0]['params'].keys()
+        keys = list(xgb_bo.res[0]['params'].keys())
         grid_res = 100
         spaces = []
         for a in range(n_params):
             h_range = hyperparam_ranges[keys[a]]
-            spaces.append(np.linspace(h_range[0],h_range[1],num=grid_res))
-
+            spaces.append(np.linspace(h_range[0], h_range[1], num=grid_res))
         grids = np.meshgrid(*spaces)
         gr_shape = grids[0].shape
-        grids_e = (np.expand_dims(g,-1) for g in grids)
-        grid = np.concatenate(grids_e,-1)
-        grid.reshape((-1,n_params))
-
+        grids_e = [np.expand_dims(g, -1) for g in grids]
+        grid = np.concatenate(grids_e, -1)
+        grid = grid.reshape((-1, 2))
         mu, sigma = xgb_bo._gp.predict(grid, return_std=True)
-        mu_r =  np.reshape(mu,gr_shape)
-        sigma_r = np.reshape(sigma,gr_shape)
-        fig = plt.figure()
+        mu_r = np.reshape(mu, gr_shape)
+        sigma_r = np.reshape(sigma, gr_shape)
+        fig = plt.figure(1)
         ax = fig.gca(projection='3d')
-
-        ax.plot_surface(grids[0], grids[1], mu_r, label='Prediction',cmap=cm.coolwarm)
-        ax.scatter(x_obs[0],x_obs[1],y_obs)
+        surf = ax.plot_surface(grids[0], grids[1], mu_r, label='Prediction', cmap=cm.coolwarm)
+        surf._facecolors2d = surf._facecolors3d
+        surf._edgecolors2d = surf._edgecolors3d
+        ax.set_xlabel(keys[0])
+        ax.set_ylabel(keys[1])
+        ax.set_zlabel('-RSME')
 
         ax.legend()
+        fig2 = plt.figure(2)
+        ax2 = fig2.gca(projection='3d')
+        ax2.scatter(x_obs[:, 0], x_obs[:, 1], y_obs, c=y_obs, label='Sample', cmap=cm.coolwarm)
+        ax2.set_xlabel(keys[0])
+        ax2.set_ylabel(keys[1])
+        ax2.set_zlabel('-RSME')
+        ax2.legend()
+
+        return fig, fig2
 
     def results_tb(self, writer=SummaryWriter()):
         x, y = self.dataset.get_contig()

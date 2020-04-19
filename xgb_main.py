@@ -35,13 +35,13 @@ with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
 
 lg.info("loading dataset")
-trainset = multiset.MultiSet(prefs, True)
-
+# trainset = multiset.MultiSet(prefs, True)
+trainset = multiset.ContigSet()
 xgb = xgboost.XGBRegressor()
 
 cont = XG_Container(trainset, xgb, 0.8, False)
 writer = SummaryWriter()
 
-cont.cv_hyper_opt_grid(None)
+cont.cv_hyper_opt_bayesian(None, s_writer=writer)
 # cont.train()
 # cont.results_tb(writer)
