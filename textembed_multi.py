@@ -1,35 +1,32 @@
 import datetime
 import json
 import logging as lg
-import sys
-import traceback
-import warnings
 from multiprocessing import Pool
-from pathos.multiprocessing import ProcessPool
-
 # from multiprocessing.shared_memory import SharedMemory
 from multiprocessing.managers import SharedMemoryManager
 
-import ctypes
-
-import yaml
 import numpy as np
-# noinspection PyUnresolvedReferences
-
+import yaml
 from multiprocessing.sharedctypes import RawArray
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from multiset import MultiSet
 
+# noinspection PyUnresolvedReferences
+
 analyser = SentimentIntensityAnalyzer()
 
 ctd = None
-def embed_line(line,n,contig_t_d,contig_t_embed):
+shape_val = None
+shape_id = None
+
+
+def embed_line(line, n, contig_t_d, contig_t_embed, contig_val, contig_id):
     try:
         if line == '':
-            return (-1,None,[])
-        contig_t_embed_local=np.ndarray((600000,4), dtype=np.float, buffer=contig_t_embed.buf)
-        contig_t_d_local=np.ndarray((600000,), dtype=np.float, buffer=contig_t_d.buf)
+            return (-1, None, [])
+        contig_t_embed_local = np.ndarray((600000, 4), dtype=np.float, buffer=contig_t_embed.buf)
+        contig_t_d_local = np.ndarray((600000,), dtype=np.float, buffer=contig_t_d.buf)
         jline = json.loads(line)
         datestr = jline['date']['$date']
         datet = datetime.datetime.strptime(datestr, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -42,6 +39,7 @@ def embed_line(line,n,contig_t_d,contig_t_embed):
         contig_t_embed_local[n]=nparr
         contig_t_d_local[n]=datet.toordinal()
         n_date = np.datetime64(date)
+
         return id, n_date, arr
     except Exception as e:
         lg.error(str(e))
@@ -61,14 +59,22 @@ if __name__ == '__main__':
     with open('resources/preferences.yaml') as f:
         prefs = yaml.load(f, Loader=yaml.FullLoader)
 
-    # multiset = MultiSet(prefs)
+    multiset = MultiSet(prefs)
 
     with SharedMemoryManager() as smm:
-        # contig_ids = multiset.contig_ids
+        contig_ids = multiset.contig_ids
         # noinspection PyUnresolvedReferences
-        contig_t_embed = smm.SharedMemory(size=np.empty((600000,4)).nbytes)
-        contig_t_d= smm.SharedMemory(size=np.empty((600000,4),dtype='int64').nbytes)
+        contig_t_embed = smm.SharedMemory(size=np.empty((600000, 4)).nbytes)
+        contig_t_d = smm.SharedMemory(size=np.empty((600000, 4), dtype='int64').nbytes)
 
+        contig_t_val = smm.SharedMemory(size=multiset.contig_vals.nbytes)
+        ctval_shp = multiset.contig_vals.shape
+        ctval_np = np.ndarray(ctval_shp, buffer=contig_t_val)
+        np.copyto(ctval_np, contig_t_val)
+        contig_id_shared = smm.SharedMemory(contig_ids.nbytes)
+        ctid__id_shp = contig_ids.shape
+        ctid_np = np.ndarray(shape=ctid__id_shp, buffer=contig_id_shared)
+        np.copyto(contig_id_shared, ctid_np)
         # check if we are running in text/image pair only
         lg.info("starting json processing in combined mode")
         start_date = datetime.date(2011, 12, 29)
@@ -88,7 +94,8 @@ if __name__ == '__main__':
         n_procs = 10
         with open(prefs['jsonfile'], "r", encoding="utf-8") as file:
             with Pool(n_procs) as embed_pool:
-                lines = [(file.readline(), n_t_tweets + a, contig_t_d, contig_t_embed) for a in range(batch)]
+                lines = [(file.readline(), n_t_tweets + a, contig_t_d, contig_t_embed, contig_t_val, contig_id_shared)
+                         for a in range(batch)]
                 # lines = [file.readline() for a in range(batch)]
                 # ctd_s = [contig_t_d for a in range(batch)]
                 # cte_s = [contig_t_embed for a in range(batch)]

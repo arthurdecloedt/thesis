@@ -1,19 +1,26 @@
 import datetime
 import json
 import logging as lg
+import multiprocessing as mp
+import sys
 from multiprocessing import Pool
+from multiprocessing.managers import SharedMemoryManager
 
-import ctypes
-# from pathos.multiprocessing import ProcessPool
 import numpy as np
-# noinspection PyUnresolvedReferences
-
-from multiprocessing.sharedctypes import RawArray
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from multiset import MultiSet
 
-analyser = SentimentIntensityAnalyzer()
+analyser = None
+shape_val_g = None
+shape_id_g = None
+ids_np_g = None
+vals_np_g = None
+dates_np_g = None
+twt_date_np_g = None
+twt_embed_np_g = None
+shape_twt_dates_g = (600000,)
+shape_twt_embed_g = (600000, 4)
 
 
 class MultiSetCombined(MultiSet):
@@ -31,10 +38,6 @@ class MultiSetCombined(MultiSet):
         # "permalink":"https://twitter.com/computer_hware/status/719905464880726018"}
         contig_ids = self.contig_ids
 
-        contig_t_d_shared = RawArray(ctypes.c_long, 600000)
-        contig_t_embed_shared = RawArray(ctypes.c_double, (600000,4))
-        contig_t_d = np.ctypeslib.as_array(contig_t_d_shared,(600000,))
-        contig_t_embed = np.ctypeslib.as_array(contig_t_embed_shared,(600000,4))
 
        # check if we are running in text/image pair only
         lg.info("starting json processing in combined mode")
@@ -46,52 +49,101 @@ class MultiSetCombined(MultiSet):
 
         date_arr_np = np.array([np.datetime64(d) for d in date_arr])
 
-        boolarr = np.zeros(date_arr_np.shape, dtype=np.bool_)
+        bool_arr = np.zeros(date_arr_np.shape, dtype=np.bool_)
         n_tweets = 0
         n_fail = 0
         skipped = 0
         n_t_tweets = 0
-        batch = 100
-        n_procs = 20
+        batch = 3000
+        n_procs = 30
+        d_arr = np.zeros(shape=contig_ids.shape, dtype=self.contig_dates.dtype)
+
         with open(self.prefs['jsonfile'], "r", encoding="utf-8") as file:
-            with ProcessPool(n_procs) as embed_pool:
-                lines = [file.readline() for a in range(batch)]
-                ctd_s = [contig_t_d_shared for a in range(batch)]
-                cte_s = [contig_t_embed_shared for a in range(batch)]
-                locs = range(n_t_tweets,n_t_tweets + batch)
-                while lines[-1][0]:
-                    try:
-                        results = embed_pool.uimap(embed_line,lines,ctd_s,cte_s,locs)
-                        for id, n_date, arr in results:
-                            loc = contig_ids.searchsorted(id)
-                            n_t_tweets += batch
-                            if loc < contig_ids.shape[0] and id == contig_ids[loc]:
-                                self.contig_vals[loc, 24:] = arr
-                                self.contig_dates[loc] = n_date
-                                boolarr[np.argwhere(date_arr_np == n_date)] = True
-                                n_tweets += 1
-                    except Exception as e:
-                        lg.error(e)
-                        n_fail += 1
-                        raise e
-                    finally:
-                        line = file.readline()
+            with SharedMemoryManager() as smm:
+
+                shape_id = self.contig_ids.shape
+                shape_val = self.contig_vals.shape
+
+                # allocating shared mem for the embedded values of the text tweets
+                twt_dates_sm = smm.SharedMemory(size=np.empty(shape_twt_dates_g, dtype=self.contig_dates.dtype).nbytes)
+                twt_embed_sm = smm.SharedMemory(size=np.empty(shape_twt_embed_g).nbytes)
+
+                # allocating shared mem for the contig arrays we already have
+                ids_np_sm = smm.SharedMemory(size=self.contig_ids.nbytes)
+                vals_np_sm = smm.SharedMemory(size=self.contig_vals.nbytes)
+                dates_sm = smm.SharedMemory(self.contig_dates.nbytes)
+
+                # creating np array with shared mem as buffer
+                ids_np = np.ndarray(shape_id, dtype=np.int64, buffer=ids_np_sm.buf)
+                vals_np = np.ndarray(shape_val, buffer=vals_np_sm.buf)
+                dates_np = np.ndarray(self.contig_dates.shape, dtype=self.contig_dates.dtype, buffer=dates_sm.buf)
+
+                # copying previous infomration into shared arrays
+                np.copyto(ids_np, self.contig_ids)
+                np.copyto(vals_np, self.contig_vals)
+                np.copyto(dates_np, self.contig_dates)
+                with Pool(n_procs, setup_subproces, (
+                twt_dates_sm, twt_embed_sm, vals_np_sm, ids_np_sm, dates_sm, shape_id, shape_val,
+                self.contig_dates.shape)) as embed_pool:
+                    lg.info("initialized pool of %s processes, %s  extra processes are running according to mp",
+                            n_procs, len(mp.active_children()))
+                    lg.info("one process extra is expected for the shared memory manager")
+                    for p in mp.active_children():
+                        lg.debug(p.name)
+
+                    results = embed_pool.imap_unordered(embed_line, filegenerator(file, n_t_tweets),
+                                                        chunksize=5 * n_procs)
+                    for id, found, date in results:
+                        n_t_tweets += 1
+                        if found:
+                            # no search over array -> duplicates but we can do this more efficiently later
+                            # search here is non parallel
+                            d_arr[n_tweets] = date
+                            n_tweets += 1
+                # copying contig values back we want its new state
+                np.copyto(self.contig_vals, vals_np)
+                un = np.unique(d_arr)
+                print(np.count_nonzero(un))
+                # copying the embedded tweets into array
+                twt_dates_np = np.ndarray(shape=shape_twt_dates_g, dtype=self.contig_dates.dtype,
+                                          buffer=twt_dates_sm.buf)
+                twt_embed_np = np.ndarray(shape=shape_twt_embed_g, buffer=twt_embed_sm.buf)
+
+                self.contig_t_dates = np.copy(twt_dates_np[twt_dates_np != 0])
+                self.contig_t_embed = np.copy(twt_embed_np[twt_embed_np != 0])
+
         dates = date_arr_np.shape[0]
-        pos_inds = np.argwhere(boolarr).squeeze()
-        date_arr_np = date_arr_np[pos_inds]
-        n_null = dates - date_arr_np.shape[0]
-        self.contig_t_embed = contig_t_embed
-        self.contig_t_dates = contig_t_d
+        print(d_arr)
+        d_arr = np.intersect1d(date_arr_np, un)
+        n_null = dates - d_arr.shape[0]
+
         lg.info("collected %s tweets with %s errors", n_tweets, n_fail)
         lg.info("collected tweets on %s dates", (delta.days - n_null))
         lg.info("deleted %s dates", n_null)
-        self.date_arr = date_arr_np
+        self.date_arr = d_arr
 
 
-def embed_line(line,contig_t_d_shared,contig_t_embed_shared,n):
+def setup_subproces(contig_tw_date_sm, contig_tw_embed_sm, contig_vals_sm, contig_id_sm, contig_date_sm, shape_id,
+                    shape_val, shape_dates):
+    global shape_val_g, shape_id_g, ids_np_g, vals_np_g, twt_date_np_g, twt_embed_np_g, dates_np_g
+    global shape_twt_dates_g, shape_twt_embed_g, analyser
+    shape_id_g = shape_id
+    shape_val_g = shape_val
+
+    ids_np_g = np.ndarray(shape=shape_id_g, dtype=np.int64, buffer=contig_id_sm.buf)
+    vals_np_g = np.ndarray(shape=shape_val_g, buffer=contig_vals_sm.buf)
+    dates_np_g = np.ndarray(shape=shape_dates, dtype='datetime64[D]', buffer=contig_date_sm.buf)
+
+    twt_date_np_g = np.ndarray(shape=shape_twt_dates_g, dtype='datetime64[D]', buffer=contig_tw_date_sm.buf)
+    twt_embed_np_g = np.ndarray(shape=shape_twt_embed_g, buffer=contig_tw_embed_sm.buf)
+
+    analyser = SentimentIntensityAnalyzer()
+
+
+def embed_line(arg):
+    line, n = arg
+    global ids_np_g, vals_np_g, twt_date_np_g, twt_embed_np_g, dates_np_g
     try:
-        contig_t_d = np.ctypeslib.as_array(contig_t_d_shared, (600000,))
-        contig_t_embed = np.ctypeslib.as_array(contig_t_embed_shared, (600000, 4))
         jline = json.loads(line)
         datestr = jline['date']['$date']
         datet = datetime.datetime.strptime(datestr, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -101,11 +153,30 @@ def embed_line(line,contig_t_d_shared,contig_t_embed_shared,n):
         sent = analyser.polarity_scores(content)
         arr = [sent['neg'], sent['neu'], sent['pos'], sent['compound']]
         nparr = np.array(arr)
-        contig_t_embed[n]=nparr
-        contig_t_d[n]=datet.toordinal()
+        twt_embed_np_g[n] = nparr
         n_date = np.datetime64(date)
-        return id, n_date, arr
+        twt_date_np_g[n] = n_date
+        loc = ids_np_g.searchsorted(id)
+        if loc < ids_np_g.shape[0] and id == ids_np_g[loc]:
+            vals_np_g[loc, 24:] = arr
+            dates_np_g[loc] = n_date
+            return id, True, n_date
+        return id, False, None
     except Exception as e:
-        lg.error(str(e))
+        print(e)
+        sys.stdout.flush()
         raise e
 
+
+def filegenerator(file, n, max=None):
+    l = file.readline()
+    if max is None:
+        while l:
+            yield l, n
+            l = file.readline()
+            n += 1
+    else:
+        while l and n < max:
+            yield l, n
+            l = file.readline()
+            n += 1
