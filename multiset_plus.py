@@ -108,7 +108,6 @@ class MultiSetCombined(MultiSet):
                 twt_dates_np = np.ndarray(shape=shape_twt_dates_g, dtype=self.contig_dates.dtype,
                                           buffer=twt_dates_sm.buf)
                 twt_embed_np = np.ndarray(shape=shape_twt_embed_g, buffer=twt_embed_sm.buf)
-
                 self.contig_t_dates = np.copy(twt_dates_np[twt_dates_np != 0])
                 self.contig_t_embed = np.copy(twt_embed_np[twt_embed_np != 0])
 
@@ -116,6 +115,13 @@ class MultiSetCombined(MultiSet):
         print(d_arr)
         d_arr = np.intersect1d(date_arr_np, un)
         n_null = dates - d_arr.shape[0]
+
+        t_inds = np.isin(self.contig_t_dates, date_arr_np)
+        # we want timsort coz almost sorted
+        t_sort = np.argsort(self.contig_t_dates[t_inds], kind="stable")
+        t_inds_sorted = t_inds[t_sort]
+        self.contig_t_dates = np.ascontiguousarray(self.contig_t_dates[t_inds_sorted])
+        self.contig_t_embed = np.ascontiguousarray(self.contig_t_embed[t_inds_sorted])
 
         lg.info("collected %s tweets with %s errors", n_tweets, n_fail)
         lg.info("collected tweets on %s dates", (delta.days - n_null))

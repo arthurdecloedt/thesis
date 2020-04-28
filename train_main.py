@@ -63,7 +63,7 @@ writer = SummaryWriter()
 
 data = torch.ones((1, 28, 50)).double()
 writer.add_graph(net, data)
-
+writer.flush()
 # optimizers = [optim.SGD(n.parameters(), lr=0.0001) for n in nets]
 
 # cont = container.Net_Container(net, trainloader, optimizer, criterion, True, valloader, s_writer=writer, vix=True)

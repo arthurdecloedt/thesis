@@ -65,48 +65,79 @@ class Pre_net(nn.Module):
         return x
 
 
+class CombinedAdaptivePool(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
+        self.max_pool = torch.nn.AdaptiveMaxPool1d(1)
+
+    def forward(self, x):
+        x = torch.cat((self.avg_pool(x).squeeze(), self.max_pool(x).squeeze()))
+        return x
+
+
+class PadPoolLayer(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.pool_a = nn.AvgPool1d(11, 1, 0, ceil_mode=True)
+        self.pool_m = nn.MaxPool1d(11, 1, ceil_mode=True)
+
+    def forward(self, x):
+        xp = F.pad(x, (5, 5), 'circular')
+        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
+        return x
+
+
 class Pooling_Net(nn.Module):
     def __init__(self, name="pooling_net"):
         super().__init__()
         self.c1 = nn.Conv1d(3 * 28, 20, 1)
 
-        self.pool_a = nn.AvgPool1d(11, 1, 0, ceil_mode=True)
-        self.pool_m = nn.MaxPool1d(11, 1, ceil_mode=True)
+        self.pad_pool = PadPoolLayer()
 
         self.c2 = nn.Conv1d(60, 15, 1)
         self.c3 = nn.Conv1d(45, 10, 1)
         self.c4 = nn.Conv1d(30, 10, 1)
-        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
-        self.max_pool = torch.nn.AdaptiveMaxPool1d(1)
-        self.linear = nn.Linear(76, 10)
+
+        self.aggregate = CombinedAdaptivePool()
+        self.linear = nn.Linear(2 * (10 + 28), 10)
         self.out = nn.Linear(10, 1)
 
         self.name = name
 
     def forward(self, x):
-        xo = x
-        xp = F.pad(x, (5, 5), 'circular')
-        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
-        x = F.relu(self.c1(x))
-
-        xp = F.pad(x, (5, 5), 'circular')
-        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
-        x = F.relu(self.c2(x))
-
-        xp = F.pad(x, (5, 5), 'circular')
-        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
-        x = F.relu(self.c3(x))
-
-        xp = F.pad(x, (5, 5), 'circular')
-        x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
-        x = F.relu(self.c4(x))
-
-        x = torch.cat((x, xo), 1)
-        x = torch.cat((self.avg_pool(x).squeeze(), self.max_pool(x).squeeze()))
+        x = self.embed(x)
+        self.aggregate(x)
         x = self.linear(x)
         x = F.relu(x)
         x = self.out(x)
         return x
+
+    def embed(self, x):
+        xo = x.clone()
+        x = self.pad_pool(x)
+        x = F.relu(self.c1(x))
+        x = self.pad_pool(x)
+        x = F.relu(self.c2(x))
+        x = self.pad_pool(x)
+        x = F.relu(self.c3(x))
+        x = self.pad_pool(x)
+        x = F.relu(self.c4(x))
+        x = torch.cat((x, xo), 1)
+        return x
+
+
+class PoolingNetPlus(Pooling_Net):
+
+    def __init__(self, name="pooling_net"):
+        super().__init__(name)
+        self.ct1 = nn.Conv1d(4, 4, 1)
+        self.ct1 = nn.Conv1d(4, 4, 1)
+
+    def forward(self, x):
+        return super().forward(x)
 
 
 class Pre_Net_Text(nn.Module):
