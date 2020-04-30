@@ -1,42 +1,43 @@
 import logging as lg
-import os
 
 import numpy as np
 import torch
-from PIL import Image
-from PIL import ImageFile
+# from PIL import Image
+# from PIL import ImageFile
 from torch.utils.data import Dataset, Sampler
-from torchvision import transforms
 
 from multiset import MultiSet, Multi_Set_Binned
 
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+# from torch import transforms
 
-class ImageDataSet(Dataset):
-    def __init__(self, root='train', transform=transforms.ToTensor()):
-        self.root = root
-        self.transform = transform
-        self.paths = [f.path for f in os.scandir(root) if f.is_file()]
-        names = [f.name for f in os.scandir(root) if f.is_file()]
-
-        self.ids = [f.split('.')[0] for f in names]
-
-        self.ids.sort()
-        lg.debug("dataset input_side initialized")
-
-    def __len__(self):
-        # Here, we need to return the number of samples in this dataset.
-        return len(self.paths)
-
-    def __getitem__(self, index):
-        img_name = os.path.join(self.root, index + '.jpg')
-        image = Image.open(img_name)
-        image = image.resize((224, 224))
-        if self.transform is not None:
-            image = self.transform(image)
-
-        return image, index
+# ImageFile.LOAD_TRUNCATED_IMAGES = True
+#
+#
+# class ImageDataSet(Dataset):
+#     def __init__(self, root='train', transform=transforms.ToTensor()):
+#         self.root = root
+#         self.transform = transform
+#         self.paths = [f.path for f in os.scandir(root) if f.is_file()]
+#         names = [f.name for f in os.scandir(root) if f.is_file()]
+#
+#         self.ids = [f.split('.')[0] for f in names]
+#
+#         self.ids.sort()
+#         lg.debug("dataset input_side initialized")
+#
+#     def __len__(self):
+#         # Here, we need to return the number of samples in this dataset.
+#         return len(self.paths)
+#
+#     def __getitem__(self, index):
+#         img_name = os.path.join(self.root, index + '.jpg')
+#         image = Image.open(img_name)
+#         image = image.resize((224, 224))
+#         if self.transform is not None:
+#             image = self.transform(image)
+#
+#         return image, index
 
 
 class IdSampler(Sampler):

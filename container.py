@@ -11,6 +11,7 @@ from matplotlib import cm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+import embed_nets
 from multiset import MultiSet, ContigSet
 
 
@@ -157,7 +158,11 @@ class Net_Container:
     s_writer: Optional[SummaryWriter]
 
     def __init__(self, net, dataloader, optimizer, criterion, validation=False, val_loader=None, s_writer=None,
-                 vix=False):
+                 vix=False, plus=False):
+
+        assert isinstance(net, embed_nets.PoolingNetPlus) ^ (not plus)
+        assert dataloader.dataset.plus ^ (not plus)
+        self.plus = plus
         self.dataloader = dataloader
         self.optimizer = optimizer
         self.criterion = criterion
@@ -190,14 +195,17 @@ class Net_Container:
         vlen = len(self.val_loader.__getattribute__('sampler'))
         for epoch in range(epochs):
             testloss = 0.0
-
             epoch_len = 0
             running_loss = 0.0
             net.train()
             optimizer.zero_grad()
             for i, data in enumerate(dataloader, 0):
                 inputs, resp = data[0].double(), data[1].double()
-                outputs = net(inputs)
+                if self.plus:
+                    plus_i = data[3].double()
+                    outputs = net(inputs, plus_i)
+                else:
+                    outputs = net(inputs)
                 loss = criterion(outputs.squeeze(), resp.squeeze())
                 running_loss += loss.item()
                 loss /= 10
@@ -221,8 +229,11 @@ class Net_Container:
                         inputs, resp, vix = data[0].double(), data[1].double(), data[2].double()
                     else:
                         inputs, resp = data[0].double(), data[1].double()
-
-                    outputs = net(inputs)
+                    if self.plus:
+                        plus_i = data[3].double()
+                        outputs = net(inputs, plus_i)
+                    else:
+                        outputs = net(inputs)
                     if epoch < 15 or epoch % 10 == 0:
                         resps[i] = outputs.squeeze().item()
                     # out=outputs.squeeze().item()

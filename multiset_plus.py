@@ -7,6 +7,7 @@ from multiprocessing import Pool
 from multiprocessing.managers import SharedMemoryManager
 
 import numpy as np
+import torch
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from multiset import MultiSet
@@ -25,10 +26,28 @@ shape_twt_embed_g = (600000, 4)
 
 class MultiSetCombined(MultiSet):
 
-    def __init__(self, prefs, contig_resp=False):
+    @property
+    def plus(self):
+        return True
+
+    def __init__(self, prefs, contig_resp=False, n_procs=5):
         self.contig_t_embed = None
         self.contig_t_dates = None
+        self.n_procs = n_procs
         super().__init__(prefs, contig_resp)
+
+    def __getitem__(self, index):
+        x = super().__getitem__(index)
+
+        date = self.date_arr[index]
+        ind_0 = np.searchsorted(self.contig_t_dates, date, side="left")
+        ind_n = np.searchsorted(self.contig_t_dates, date, side='right')
+        if ind_0 >= self.contig_t_embed.shape[0] or ind_n <= 0:
+            raise ValueError('date not found')
+        data = self.contig_t_embed[ind_0:ind_n]
+        data = data.transpose((1, 0))
+        data_tens = torch.from_numpy(data)
+        return *x, data_tens
 
     def read_json_aapl(self):
         # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
@@ -49,13 +68,10 @@ class MultiSetCombined(MultiSet):
 
         date_arr_np = np.array([np.datetime64(d) for d in date_arr])
 
-        bool_arr = np.zeros(date_arr_np.shape, dtype=np.bool_)
         n_tweets = 0
         n_fail = 0
-        skipped = 0
         n_t_tweets = 0
-        batch = 3000
-        n_procs = 30
+        n_procs = self.n_procs
         d_arr = np.zeros(shape=contig_ids.shape, dtype=self.contig_dates.dtype)
 
         with open(self.prefs['jsonfile'], "r", encoding="utf-8") as file:
@@ -100,16 +116,17 @@ class MultiSetCombined(MultiSet):
                             # search here is non parallel
                             d_arr[n_tweets] = date
                             n_tweets += 1
-                # copying contig values back we want its new state
+                # copying contig values and dates back we want its new state
                 np.copyto(self.contig_vals, vals_np)
+                np.copyto(self.contig_dates, dates_np)
                 un = np.unique(d_arr)
                 print(np.count_nonzero(un))
                 # copying the embedded tweets into array
                 twt_dates_np = np.ndarray(shape=shape_twt_dates_g, dtype=self.contig_dates.dtype,
                                           buffer=twt_dates_sm.buf)
                 twt_embed_np = np.ndarray(shape=shape_twt_embed_g, buffer=twt_embed_sm.buf)
-                self.contig_t_dates = np.copy(twt_dates_np[twt_dates_np != 0])
-                self.contig_t_embed = np.copy(twt_embed_np[twt_embed_np != 0])
+                self.contig_t_dates = np.copy(twt_dates_np)
+                self.contig_t_embed = np.copy(twt_embed_np)
 
         dates = date_arr_np.shape[0]
         print(d_arr)
@@ -119,9 +136,14 @@ class MultiSetCombined(MultiSet):
         t_inds = np.isin(self.contig_t_dates, date_arr_np)
         # we want timsort coz almost sorted
         t_sort = np.argsort(self.contig_t_dates[t_inds], kind="stable")
-        t_inds_sorted = t_inds[t_sort]
-        self.contig_t_dates = np.ascontiguousarray(self.contig_t_dates[t_inds_sorted])
-        self.contig_t_embed = np.ascontiguousarray(self.contig_t_embed[t_inds_sorted])
+        print(self.contig_t_embed.shape, self.contig_t_dates.shape)
+
+        td_interm = self.contig_t_dates[t_inds]
+        te_interm = self.contig_t_embed[t_inds]
+        print(te_interm.shape)
+        print(td_interm.shape)
+        self.contig_t_dates = np.ascontiguousarray(td_interm[t_sort])
+        self.contig_t_embed = np.ascontiguousarray(te_interm[t_sort])
 
         lg.info("collected %s tweets with %s errors", n_tweets, n_fail)
         lg.info("collected tweets on %s dates", (delta.days - n_null))
@@ -172,6 +194,7 @@ def embed_line(arg):
         print(e)
         sys.stdout.flush()
         raise e
+
 
 
 def filegenerator(file, n, max=None):

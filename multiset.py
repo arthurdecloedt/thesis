@@ -353,6 +353,10 @@ class MultiSet(Dataset):
         assert self.has_contig
         return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
 
+    @property
+    def plus(self):
+        return False
+
     def read_json_aapl(self, ):
         # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
         # "$date":"2016-04-12T17:10:12.000Z"},"retweets":0,"favorites":0,"content":"#Apple iPhone SE release date, price,
@@ -413,6 +417,11 @@ class MultiSet(Dataset):
 
 
 class Multi_Set_Binned(Dataset):
+
+    @property
+    def plus(self):
+        return False
+
     def __init__(self, reshuffle=False, load=False, prefs=None, path=''):
         super().__init__()
         self.training_idx, self.test_idx = None, None
