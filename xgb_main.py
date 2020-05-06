@@ -42,6 +42,11 @@ xgb = xgboost.XGBRegressor()
 cont = XG_Container(trainset, xgb, 0.8, False)
 writer = SummaryWriter()
 
-cont.cv_hyper_opt_bayesian(None, s_writer=writer)
+cont.cv_hyper_opt_bayesian(s_writer=writer)
+
+cont.xgb = xgboost.XGBRegressor(n_estimators=int(cont.bo_results['params']['n_estimators']),
+                                max_depth=int(cont.bo_results['params']['max_depth']))
+cont.train()
+cont.results_tb(writer)
 # cont.train()
 # cont.results_tb(writer)

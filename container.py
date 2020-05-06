@@ -36,7 +36,7 @@ class XG_Container:
         self.v_inds = inds[:self.train_size]
 
         self.xgb = xgb
-
+        self.bo_results = None
     def train(self):
         x, y = self.dataset.get_contig()
         np.random.shuffle(self.t_inds)
@@ -54,7 +54,7 @@ class XG_Container:
 
         if hyperparam_ranges is None:
             hyperparam_ranges = {'max_depth': (3, 20),
-                                 'n_estimators': (100, 700)
+                                 'n_estimators': (10, 500)
                                  }
         x, y = self.dataset.get_contig()
 
@@ -66,28 +66,37 @@ class XG_Container:
                       'subsample': 0.8,
                       'eta': 0.1,
                       'eval_metric': 'rmse',
-                      'nthread': 20}
-            # Cross validating with the specified parameters in 5 folds and 70 iterations
+                      'nthread': -1
+                      }
 
-            cv_result = xgb.cv(params, dtrain, num_boost_round=70, nfold=folds)
+            cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
             # Return the negative RMSE
             return -1.0 * cv_result['test-rmse-mean'].iloc[-1]
 
         xgb_bo = BayesianOptimization(bo_tune_xgb, hyperparam_ranges)
+        xgb_bo.probe([7, 20])
+        xgb_bo.probe([7, 22])
         self.bo = xgb_bo
 
+        xgb_bo.maximize(n_iter=0, init_points=0, acq='ei')
+        self.bo_results = xgb_bo.max
+
         xgb_bo.maximize(n_iter=0, init_points=10, acq='ei')
+
         fig, fig2 = self.create_figures(hyperparam_ranges, xgb_bo)
 
         s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
         s_writer.add_figure("predicted_function", fig, global_step=0)
 
         for a in range(100):
-            xgb_bo.maximize(n_iter=2, acq='ei')
+            xgb_bo.maximize(n_iter=10, acq='ei')
             fig, fig2 = self.create_figures(hyperparam_ranges, xgb_bo)
 
             s_writer.add_figure("predicted_function_scatter", fig2, global_step=a + 1)
             s_writer.add_figure("predicted_function", fig, global_step=a + 1)
+            s_writer.flush()
+
+        self.bo_results = xgb_bo.max
 
     def create_figures(self, hyperparam_ranges, xgb_bo):
         x_obs = np.array([list(res["params"].values()) for res in xgb_bo.res])
@@ -143,7 +152,16 @@ class XG_Container:
         writer.add_histogram("total/pred", totalpredict)
         writer.add_histogram("val/pred", valpredict)
         writer.add_histogram("train/pred", trainpredict)
+        xgb.plot_importance(self.xgb)
+        fig = plt.gcf()
+        # fig2.add_subplot(xgb.plot_tree(self.xgb,num_trees=5))
 
+        writer.add_figure("importance", fig)
+        plt.close(fig)
+        xgb.plot_tree(self.xgb, num_trees=5)
+        fig = plt.gcf()
+        fig.set_size_inches(150, 100)
+        fig.savefig('runs/tree.png')
         msettl = sk.metrics.mean_squared_error(totalpredict, y)
         msetr = sk.metrics.mean_squared_error(trainpredict, yt)
         msev = sk.metrics.mean_squared_error(valpredict, yv)
@@ -363,7 +381,6 @@ class Multi_Net_Container(Net_Container):
                 # lg.info('e: %d | %s training_loss: %.10f', epoch + 1, val_size, (val_loss[] / val_size))
                 if self.tensorboard:
                     # self.s_writer.add_scalar("Loss/Val", (val_loss / val_size), epoch + 1)
-
                     writerdict = {"median": (median_loss / val_size[0]),
                                   'zero': (zero_loss / val_size[0])
                                   }

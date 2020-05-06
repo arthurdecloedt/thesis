@@ -218,6 +218,13 @@ class MultiSet(Dataset):
 
         return obj
 
+    def write_embedding(self, writer: SummaryWriter, n_rows=2000):
+
+        row_inds = np.random.randint(0, self.contig_ids.shape[0], n_rows)
+        rows = self.contig_vals[row_inds]
+        rows_t = torch.from_numpy(rows)
+        writer.add_embedding(rows_t, list(self.contig_dates[row_inds]), tag='Multiset: 24_mean_5 | 4_VADER')
+
     def init_imagefolder(self, preembedfolder):
         lg.info("starting preembed data processing")
         names = [f.name for f in os.scandir(preembedfolder) if f.is_file()]

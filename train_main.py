@@ -76,5 +76,5 @@ cont = container.Net_Container(net, trainloader, optimizer, criterion, True, val
                                plus=True)
 # #
 
-cont.train(200)
+# cont.train(200)
 # # m_cont = embed_nets.Multi_Net_Container(nets, trainloader, optimizers, criterion, True, valloader, writer)
