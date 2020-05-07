@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
     import yaml
 
-    with open('resources/preferences.yaml') as f:
+    with open('../resources/preferences.yaml') as f:
         prefs = yaml.load(f, Loader=yaml.FullLoader)
 
     test_set = multiset_plus.MultiSetCombined(prefs, contig_resp=True)

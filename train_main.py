@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 import container
 import dataprocessing
 import embed_nets
-import multiset_plus
+import multiset
 
 # def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 #     log = file if hasattr(file, 'write') else sys.stderr
@@ -39,7 +39,9 @@ with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
     lg.info("loading dataset")
 
-trainset = multiset_plus.MultiSetCombined(prefs, n_procs=4)
+trainset = multiset.MultiSet(prefs, contig_resp=True)
+trainset.save_contig()
+exit(0)
 # lg.info("saving dataset")
 # trainset.save()
 

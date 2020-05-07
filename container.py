@@ -2,6 +2,8 @@ import logging as lg
 from typing import Optional
 
 import matplotlib.pyplot as plt
+# noinspection PyUnresolvedReferences
+import mpl_toolkits.mplot3d
 import numpy as np
 import sklearn as sk
 import torch
@@ -66,7 +68,7 @@ class XG_Container:
                       'subsample': 0.8,
                       'eta': 0.1,
                       'eval_metric': 'rmse',
-                      'nthread': -1
+                      'nthread': 34
                       }
 
             cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
@@ -130,7 +132,9 @@ class XG_Container:
         ax.legend()
         fig2 = plt.figure(2)
         ax2 = fig2.gca(projection='3d')
-        ax2.scatter(x_obs[:, 0], x_obs[:, 1], y_obs, c=y_obs, label='Sample', cmap=cm.coolwarm)
+        print(y_obs)
+        print(y_obs.shape)
+        ax2.scatter(x_obs[:, 0], x_obs[:, 1], y_obs, c=y_obs.squeeze(), label='Sample', cmap=cm.coolwarm)
         ax2.set_xlabel(keys[0])
         ax2.set_ylabel(keys[1])
         ax2.set_zlabel('-RSME')
