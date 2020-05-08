@@ -71,6 +71,7 @@ class CombinedAdaptivePool(nn.Module):
         super().__init__()
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(n)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(n)
+        self.name = 'Combined_Adaptive_Pool_layer'
 
     def forward(self, x):
         x = torch.cat((self.avg_pool(x).squeeze(), self.max_pool(x).squeeze()))
@@ -81,7 +82,8 @@ class PadPoolLayer(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.pool_a = nn.AvgPool1d(11, 1, 0, ceil_mode=True)
+        self.name = "Pad_Pool_Layer"
+        self.pool_a = nn.AvgPool1d(11, 1, ceil_mode=True)
         self.pool_m = nn.MaxPool1d(11, 1, ceil_mode=True)
 
     def forward(self, x):
@@ -90,15 +92,20 @@ class PadPoolLayer(nn.Module):
         return x
 
 
-class PlusPoolLayer(nn.Module):
+class PlusPoolLayer(torch.jit.ScriptModule):
 
     def __init__(self):
         super().__init__()
+        self.name = 'Plus_Pool_Layer'
 
-    def forward(self, x, n):
-        x_m = F.adaptive_max_pool1d(x, output_size=n.item() if type(n) == torch.Tensor else n)
-        x_a = F.adaptive_avg_pool1d(x, output_size=n.item() if type(n) == torch.Tensor else n)
-        return torch.cat((x_m, x_a), 1)
+    @torch.jit.script_method
+    def forward(self, x_t, x):
+        output_size = x.size(2)
+        x_m = F.adaptive_max_pool1d(x_t, output_size=output_size)
+        x_a = F.adaptive_avg_pool1d(x_t, output_size=output_size)
+        return torch.cat((x_m, x_a, x), 1)
+
+
 
 class Pooling_Net(nn.Module):
     def __init__(self, name="pooling_net", n_pp=4, n_aggr=1, emb_sz=28):
@@ -142,17 +149,17 @@ class Pooling_Net(nn.Module):
 
 class PoolingNetPlus(Pooling_Net):
 
-    def __init__(self, name="pooling_net", n_aggr=1):
+    def __init__(self, name="pooling_net_plus", n_aggr=1):
         super().__init__(name, emb_sz=32)
         self.ct1 = nn.Conv1d(4, 2, 1)
         self.ct2 = nn.Conv1d(4, 3, 1)
         self.pool_plus = PlusPoolLayer()
+
         self.linear = nn.Linear(2 * n_aggr * (10 + 28 + 4 + 3), 10)
 
     def forward(self, x, x_t):
         x_tp = F.relu(self.ct1(x_t))
-        x_tp = self.pool_plus(x_tp, x.size(2))
-        x = torch.cat((x, x_tp), 1)
+        x = self.pool_plus(x_tp, x)
         x = self.embed(x)
         x_t = F.relu(self.ct2(x_t))
         x = self.aggregate(x)
