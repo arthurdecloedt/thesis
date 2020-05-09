@@ -7,10 +7,9 @@ from multiprocessing.managers import SharedMemoryManager
 
 import numpy as np
 import yaml
-from multiprocessing.sharedctypes import RawArray
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from multiset import MultiSet
+from utils.multiset import MultiSet
 
 # noinspection PyUnresolvedReferences
 
@@ -56,7 +55,7 @@ if __name__ == '__main__':
     # specs and features: iPhone SE users report Bluetooth ... Read more: http://owler.us/aayzDR $ AAPL","geo":"",
     # "mentions":"","hashtags":"#Apple","replyTo":"","id":"719905464880726018",
     # "permalink":"https://twitter.com/computer_hware/status/719905464880726018"}
-    with open('resources/preferences.yaml') as f:
+    with open('../resources/preferences.yaml') as f:
         prefs = yaml.load(f, Loader=yaml.FullLoader)
 
     multiset = MultiSet(prefs)

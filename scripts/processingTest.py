@@ -1,6 +1,6 @@
 import logging as lg
 
-import multiset_plus
+from utils import multiset_plus
 
 if __name__ == '__main__':
     logFormatter = lg.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")

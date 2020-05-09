@@ -99,12 +99,21 @@ class PlusPoolLayer(torch.jit.ScriptModule):
         self.name = 'Plus_Pool_Layer'
 
     @torch.jit.script_method
-    def forward(self, x_t, x):
-        output_size = x.size(2)
-        x_m = F.adaptive_max_pool1d(x_t, output_size=output_size)
-        x_a = F.adaptive_avg_pool1d(x_t, output_size=output_size)
-        return torch.cat((x_m, x_a, x), 1)
+    def forward(self, input_t, input_m):
+        output_size = input_m.size(2)
+        max_adpooled_t = F.adaptive_max_pool1d(input_t, output_size=output_size)
+        avg_adpooled_t = F.adaptive_avg_pool1d(input_t, output_size=output_size)
+        return torch.cat((max_adpooled_t, avg_adpooled_t, input_m), 1)
 
+
+class PPWrapper(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.pp = PlusPoolLayer()
+
+    def forward(self, x, y):
+        return self.pp(x, y)
 
 
 class Pooling_Net(nn.Module):

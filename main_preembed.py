@@ -4,9 +4,9 @@ import sys
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from dataprocessing import *
+from utils.dataprocessing import *
 
-MainModel = imp.load_source("MainModel", "./export_mvso.py")
+MainModel = imp.load_source("MainModel", "utils/export_mvso.py")
 
 weight_file = sys.argv[1]
 ims_location = sys.argv[2]

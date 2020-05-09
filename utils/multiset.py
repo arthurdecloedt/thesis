@@ -213,7 +213,7 @@ class MultiSet(Dataset):
 
         obj.analyser = SentimentIntensityAnalyzer()
 
-        with open('resources/preferences.yaml') as f:
+        with open('../resources/preferences.yaml') as f:
             obj.prefs = yaml.load(f, Loader=yaml.FullLoader)
 
         return obj

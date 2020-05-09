@@ -13,14 +13,13 @@ from matplotlib import cm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-import embed_nets
-from multiset import MultiSet, ContigSet
+from utils import embed_nets
+from utils.multiset import MultiSet, ContigSet
 
 
 class XG_Container:
     xgb: xgb.XGBRegressor
-    dataset: [MultiSet ,ContigSet]
-
+    dataset: [MultiSet, ContigSet]
 
     def __init__(self, dataset, xgb, split=0.8, temporal=False) -> None:
         self.dataset = dataset

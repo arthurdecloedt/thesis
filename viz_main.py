@@ -1,6 +1,4 @@
-import torch.onnx
-
-from embed_nets import *
+from utils.embed_nets import *
 
 nets = [PoolingNetPlus(), Pooling_Net(), Mixed_Net(), Pre_net(), Pre_Net_Text(), CombinedAdaptivePool(1),
         PadPoolLayer(), PlusPoolLayer()]

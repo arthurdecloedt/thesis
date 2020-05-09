@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from multiset import MultiSet
+from utils.multiset import MultiSet
 
 analyser = None
 shape_val_g = None

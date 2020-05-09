@@ -5,10 +5,7 @@ import yaml
 from torch import optim, nn
 from torch.utils.tensorboard import SummaryWriter
 
-import container
-import dataprocessing
-import embed_nets
-import multiset
+from utils import dataprocessing, multiset, container, embed_nets
 
 # def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 #     log = file if hasattr(file, 'write') else sys.stderr
