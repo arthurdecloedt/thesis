@@ -317,7 +317,7 @@ class MultiSet(Dataset):
         for n in range(len(vals)):
             top_inds = np.argpartition(vals[n], ind)[ind:]
 
-            proc_val[n] = np.max(ems[top_inds], axis=0)
+            proc_val[n] = np.sum(ems[top_inds], axis=0)
             # for ti in top_inds:
             #     proc_val[n] += ems[ti]
         return proc_val

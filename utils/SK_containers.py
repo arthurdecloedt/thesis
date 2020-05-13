@@ -42,33 +42,47 @@ class SK_container:
         yt = y[self.t_inds]
         self.regressor.fit(xt, yt)
 
-    def cv_hopt_bayesian(self, hyperparam_ranges, tuning_f, s_writer=SummaryWriter(), resname="bayesopt_res",
+    def register_bo(self, hyperparam_ranges, tuning_f):
+        self.bo = BayesianOptimization(tuning_f, hyperparam_ranges)
+
+    def cv_hopt_bayesian(self, hyperparam_ranges, s_writer=SummaryWriter(), resname="bayesopt_res",
                          iters=100):
 
-        bayes_opt = BayesianOptimization(tuning_f, hyperparam_ranges)
-        self.bo = bayes_opt
-
+        bayes_opt = self.bo
         lg.info("initializing Bayesian Optimization with 5 points")
-        bayes_opt.maximize(n_iter=0, init_points=5, acq='ei')
-
-        fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
-
-        s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
-        s_writer.add_figure("predicted_function", fig, global_step=0)
+        bayes_opt.maximize(n_iter=0, init_points=5)
+        #
+        # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
+        #
+        # s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
+        # s_writer.add_figure("predicted_function", fig, global_step=0)
         n = int(ceil(iters / 10))
         for a in range(n):
-            bayes_opt.maximize(n_iter=10, acq='ei')
-            fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
+            bayes_opt.maximize(n_iter=10, init_points=1)
+            # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
 
-            s_writer.add_figure("predicted_function_scatter", fig2, global_step=a + 1)
-            s_writer.add_figure("predicted_function", fig, global_step=a + 1)
+            # s_writer.add_figure("predicted_function_scatter", fig2, global_step=a + 1)
+            # s_writer.add_figure("predicted_function", fig, global_step=a + 1)
             s_writer.flush()
             self.bo_points = bayes_opt.res
-            self.bo_results = bayes_opt.res
+            self.bo_results = bayes_opt.max
             with open(resname, 'wb') as file:
-                pickle.dump(self.bo_results, file)
+                pickle.dump(self.bo_points, file)
             lg.info("evaluated %s points", a * 10 + 10)
         self.bo_results = bayes_opt.max
+
+    def reload_progress(self, resname="bayesopt_res"):
+        with open(resname, 'rb') as file:
+            points = pickle.load(file)
+            x_obs = np.array([list(res["params"].values()) for res in points])
+            y_obs = np.array([[res["target"]] for res in points])
+
+            for x, y in zip(x_obs, y_obs):
+                self.bo.register(x, y[0])
+            lg.info("registered %s points", len(y))
+
+            self.bo_results = self.bo.max
+            self.bo_points = self.bo.res
 
     def create_figures(self, hyperparam_ranges, bo):
         x_obs = np.array([list(res["params"].values()) for res in bo.res])
@@ -77,7 +91,7 @@ class SK_container:
         n_params = len(hyperparam_ranges.keys())
         n_res = len(bo.res)
         keys = list(bo.res[0]['params'].keys())
-        grid_res = 100
+        grid_res = 500
         spaces = []
         for a in range(n_params):
             h_range = hyperparam_ranges[keys[a]]
@@ -102,14 +116,11 @@ class SK_container:
         ax.legend()
         fig2 = plt.figure(2)
         ax2 = fig2.gca(projection='3d')
-        print(y_obs)
-        print(y_obs.shape)
         ax2.scatter(x_obs[:, 0], x_obs[:, 1], y_obs, c=y_obs.squeeze(), label='Sample', cmap=cm.coolwarm)
         ax2.set_xlabel(keys[0])
         ax2.set_ylabel(keys[1])
         ax2.set_zlabel('MSE')
         ax2.legend()
-
         return fig, fig2
 
 
@@ -156,38 +167,88 @@ class XG_Container(SK_container):
     def __init__(self, dataset, regressor, split=0.8, temporal=True) -> None:
         super().__init__(dataset, regressor, split, temporal)
 
-    def cv_hyper_opt_bayesian(self, hyperparam_ranges=None, folds=5, s_writer=SummaryWriter(), resname="xgb_bo_res.p",
-                              iterations=0, h_writer=None, restart=False):
-        if h_writer is None:
-            h_writer = s_writer
-        if hyperparam_ranges is None:
-            hyperparam_ranges = {'max_depth': (5, 12),
-                                 'n_estimators': (50, 500)
-                                 }
+    def register_bo_cv(self, hyperparam_ranges, folds=5, h_writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
 
-        def bo_tune_xgb(max_depth, n_estimators):
-            params = {'max_depth': int(max_depth),
-                      'n_estimators': int(n_estimators),
-                      'nthread': 4
-                      }
-
+        def bo_tune_xgb(max_depth, gamma):
             # cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
             tss = sk.model_selection.TimeSeriesSplit(folds)
             acc = 0.0
             for train_i, test_i in tss.split(x):
-                regressor = xgb.XGBRegressor(**params)
+                regressor = xgb.XGBRegressor(max_depth=int(max_depth), gamma=gamma, n_jobs=34)
                 regressor.fit(x[train_i], y[train_i])
                 pred = regressor.predict(x[test_i])
                 truth = y[test_i]
                 acc += sk.metrics.mean_squared_error(truth, pred)
             # Return the negative MSE
             t_mse = acc / folds
-            h_writer.add_hparams({'max_depth': int(max_depth), 'n_estimators': int(n_estimators)},
+            h_writer.add_hparams({'max_depth': int(max_depth), 'gamma': gamma},
                                  {'hparam/time_split_test_rmse': t_mse})
-            return -1. * acc / folds
+            return -1. * t_mse
 
-        self.cv_hopt_bayesian(hyperparam_ranges, bo_tune_xgb, s_writer, resname, iterations)
+        super().register_bo(hyperparam_ranges, bo_tune_xgb)
+
+    def register_bo_tcv(self, hyperparam_ranges, folds=5, h_writer=SummaryWriter()):
+        x, y = self.dataset.get_contig()
+
+        dtrain = xgb.DMatrix(data=x, label=y, nthread=2)
+
+        def bo_tune_xgb(max_depth, gamma, lr, drop):
+            prms = {
+                'booster': 'dart',
+                "max_depth": int(max_depth),
+                "gamma": gamma,
+                'learning_rate': lr,
+                'rate_drop': drop,
+                'nthread': 34,
+                'eval_metric': 'rmse'
+            }
+
+            # cv_result = xgb.cv(prms, dtrain, 70, nfold=folds)
+            tss = sk.model_selection.TimeSeriesSplit(folds * 2)
+
+            cv_result = xgb.cv(prms, dtrain, num_boost_round=200, nfold=folds, folds=list(tss.split(x))[folds:],
+                               early_stopping_rounds=10)
+
+            # Return the negative MSE
+            rmse = cv_result['test-rmse-mean'].iloc[-1]
+            h_writer.add_hparams(prms, {'RMSE': rmse})
+            return -1. * rmse
+
+        super().register_bo(hyperparam_ranges, bo_tune_xgb)
+
+    def cv_hyper_opt_bayesian(self, hyperparam_ranges=None, folds=5, s_writer=SummaryWriter(), resname="xgb_bo_res.p",
+                              iterations=0, h_writer=None, restart=False):
+        if h_writer is None:
+            h_writer = s_writer
+        if hyperparam_ranges is None:
+            hyperparam_ranges = {'max_depth': (3, 15),
+                                 'gamma': (0.01, 1.5)
+                                 }
+        self.cv_hopt_bayesian(hyperparam_ranges, s_writer, resname, iterations)
+
+    def reload_progress(self, resname="xgb_bo_res.p"):
+        super().reload_progress(resname)
+
+    # def save_figs(self,hyperparam_ranges,bo,writer):
+    #     f1, f2 = self.create_figures(hyperparam_ranges,bo)
+    #     writer.add_figure("predicted_function_scatter", f2, global_step=1)
+    #     writer.add_figure("predicted_function", f, global_step=1)
+    def tcv(self, folds=10, writer=SummaryWriter()):
+        # cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
+        tss = sk.model_selection.TimeSeriesSplit(folds)
+        x, y = self.dataset.get_contig()
+        m_list = []
+        for i, (train_i, test_i) in enumerate(tss.split(x)):
+            regressor = self.regressor
+            regressor.fit(x[train_i], y[train_i])
+            pred = regressor.predict(x[test_i])
+            truth = y[test_i]
+            mse = sk.metrics.mean_squared_error(truth, pred)
+            m_list.append(mse)
+            dict = {'MSE_%s' % self.regressor.max_depth: mse}
+            writer.add_scalars("MSE_TCV", dict, i)
+        return m_list
 
     def results_tb(self, writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
