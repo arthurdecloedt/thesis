@@ -11,7 +11,7 @@ from utils.multiset import MultiSet, Multi_Set_Binned
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-
+# dataset for preembedding images
 class ImageDataSet(Dataset):
     def __init__(self, root='train', transform=transforms.ToTensor()):
         self.root = root
@@ -38,6 +38,7 @@ class ImageDataSet(Dataset):
         return image, index
 
 
+# Sampler used in preembedding
 class IdSampler(Sampler):
 
     def __init__(self, data_source):
@@ -57,6 +58,7 @@ def save_partition(n_partition, accstr, accnum, output):
     lg.debug('saved: ' + output + 'array_' + str(n_partition) + '.npy')
 
 
+# Sampler for multiset
 class MultiSampler(torch.utils.data.Sampler):
     data_source: MultiSet
 
@@ -74,6 +76,7 @@ class MultiSampler(torch.utils.data.Sampler):
         return self.l
 
 
+# sampler for multiset that supports a test/val split
 class MultiSplitSampler(MultiSampler):
     def __init__(self, data_source, train=True):
         super().__init__(data_source)
@@ -86,6 +89,7 @@ class MultiSplitSampler(MultiSampler):
         return iter(np.random.permutation(self.inds))
 
 
+# sampler for binned multiset, allows for splitting
 class MultiBinSampler(Sampler):
 
     def __init__(self, data_source: Multi_Set_Binned):
@@ -96,6 +100,8 @@ class MultiBinSampler(Sampler):
         self.train = True
         self.len = data_source.c
 
+    # convert this sampler to a split sampler and return the validation split
+    # only temporal splits are implemented
     def get_val_sampler(self, distr=.8, temporal=True):
 
         if temporal:
@@ -115,6 +121,7 @@ class MultiBinSampler(Sampler):
             return val_sampler
         raise NotImplementedError
 
+    # get iterator of samples for dataloader
     def __iter__(self):
         if self.data_source.reshuffle and self.train:
             self.data_source.shuffle_bins()

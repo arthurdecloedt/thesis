@@ -63,7 +63,7 @@ cont.register_bo_tcv(hyperparam_ranges)
 #         }
 # # )
 cont.reload_progress("xgb_bo_9_final.p")
-cont.cv_hyper_opt_bayesian(s_writer=writer, iterations=500, h_writer=h_writer, resname="xgb_bo_10_final.p")
+cont.cv_hyper_opt_bayesian(s_writer=writer, iterations=500, resname="xgb_bo_10_final.p")
 
 lg.info(cont.bo_results)
 writer.flush()

@@ -14,6 +14,9 @@ from torch.utils.tensorboard import SummaryWriter
 from utils.multiset import MultiSet, ContigSet
 
 
+# this class is a wrapper around a predictor object with an sklearn interface
+# Subclasses are defined for a linear regression and xgboost, Elasticnet and Random forest are not yet implemented
+# The dataset used is a contiguous multiset derived from a multiset.
 class SK_container:
     def __init__(self, dataset, regressor, split=0.8, temporal=True) -> None:
         self.dataset = dataset
@@ -21,6 +24,9 @@ class SK_container:
         self.split = split
         assert self.dataset.has_contig
         self.total_size = np.sum(self.dataset.contig_usable)
+
+        # the train size was originally meant to be used but now it's only maintained for compat reasons,
+        # validation is performed by cv or walk forward validation
         self.train_size = int(self.total_size * self.split)
         self.val_size = self.total_size - self.train_size
         if temporal:
@@ -42,22 +48,30 @@ class SK_container:
         yt = y[self.t_inds]
         self.regressor.fit(xt, yt)
 
+    # register hyperparameter ranges and an objective function for training, this has to be split form the main method
+    # because we want to be able to use the container from an interactive shell and to reload the bo
     def register_bo(self, hyperparam_ranges, tuning_f):
         self.bo = BayesianOptimization(tuning_f, hyperparam_ranges)
 
+    # do the actual bayesian optimization
     def cv_hopt_bayesian(self, hyperparam_ranges, s_writer=SummaryWriter(), resname="bayesopt_res",
                          iters=100):
 
         bayes_opt = self.bo
         lg.info("initializing Bayesian Optimization with 5 points")
         bayes_opt.maximize(n_iter=0, init_points=5)
-        #
+
+        # this code was relevant when optimizing for 2 hyperparameters, when optimizing for four (as we're doing now)
+        # it's not really usefull (it wouldn't work either.)
+
         # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
         #
         # s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
         # s_writer.add_figure("predicted_function", fig, global_step=0)
-        n = int(ceil(iters / 10))
+
+        n = int(ceil(iters / 11))
         for a in range(n):
+            # this will sample 10 drawn configurations and one random one(to control greediness)
             bayes_opt.maximize(n_iter=10, init_points=1)
             # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
 
@@ -67,10 +81,12 @@ class SK_container:
             self.bo_points = bayes_opt.res
             self.bo_results = bayes_opt.max
             with open(resname, 'wb') as file:
+                # we overwrite the last parameter file, allows us to analyze evaluated points and restart optimization
                 pickle.dump(self.bo_points, file)
             lg.info("evaluated %s points", a * 10 + 10)
         self.bo_results = bayes_opt.max
 
+    # reload used points into a bayesian_optimization, object needs to be initialized first
     def reload_progress(self, resname="bayesopt_res"):
         with open(resname, 'rb') as file:
             points = pickle.load(file)
@@ -84,6 +100,8 @@ class SK_container:
             self.bo_results = self.bo.max
             self.bo_points = self.bo.res
 
+    #  code is a very heavily adapted version of https://github.com/fmfn/BayesianOptimization/blob/master/examples/visualization.ipynb
+    #  but it was expanded into 2d and a 3d plot with separate plots for evaluated points and surface
     def create_figures(self, hyperparam_ranges, bo):
         x_obs = np.array([list(res["params"].values()) for res in bo.res])
         y_obs = np.array([[res["target"]] for res in bo.res])
@@ -124,10 +142,12 @@ class SK_container:
         return fig, fig2
 
 
+# defines a container for a linear regresson,
 class lr_Container(SK_container):
     def __init__(self, dataset, regressor, split=0.8, temporal=True) -> None:
         super().__init__(dataset, regressor, split, temporal)
 
+    # log results to tensorboard
     def results_tb(self, writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
         xt = x[self.t_inds]
@@ -142,16 +162,6 @@ class lr_Container(SK_container):
         writer.add_histogram("total/pred", totalpredict)
         writer.add_histogram("val/pred", valpredict)
         writer.add_histogram("train/pred", trainpredict)
-        # xgb.plot_importance(self.regressor)
-        # fig = plt.gcf()
-        # # fig2.add_subplot(xgb.plot_tree(self.xgb,num_trees=5))
-        #
-        # writer.add_figure("importance", fig)
-        # plt.close(fig)
-        # xgb.plot_tree(self.regressor, num_trees=5)
-        # fig = plt.gcf()
-        # fig.set_size_inches(150, 100)
-        # fig.savefig('runs/tree.png')
         msettl = sk.metrics.mean_squared_error(totalpredict, y)
         msetr = sk.metrics.mean_squared_error(trainpredict, yt)
         msev = sk.metrics.mean_squared_error(valpredict, yv)
@@ -160,6 +170,10 @@ class lr_Container(SK_container):
         lg.info("train mse loss: %s", msetr)
 
 
+# This class originally defined a container for an xgboostregressor,
+# But it evolved to house hyperparameter optimization logic, the wrapped model is still there but not really the focus
+# Was originally root class but a lot of logic was pushed to super class
+# to support for lr regression, (and elastic and rf in future)
 class XG_Container(SK_container):
     regressor: xgb.XGBRegressor
     dataset: [MultiSet, ContigSet]
@@ -167,14 +181,19 @@ class XG_Container(SK_container):
     def __init__(self, dataset, regressor, split=0.8, temporal=True) -> None:
         super().__init__(dataset, regressor, split, temporal)
 
+    # register a bayesian optimization with the cross validation function
+    # Not often used because temporal data
+    # derived from temporal split aproach, mainly to verify its behaviour
+    # should be fixed to support all the hparams
     def register_bo_cv(self, hyperparam_ranges, folds=5, h_writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
 
         def bo_tune_xgb(max_depth, gamma):
             # cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
-            tss = sk.model_selection.TimeSeriesSplit(folds)
+            tss = sk.model_selection.KFold(folds)
             acc = 0.0
             for train_i, test_i in tss.split(x):
+                # we have to explicitly define number of threads because openMP does smth strange when run on genius
                 regressor = xgb.XGBRegressor(max_depth=int(max_depth), gamma=gamma, n_jobs=34)
                 regressor.fit(x[train_i], y[train_i])
                 pred = regressor.predict(x[test_i])
@@ -182,6 +201,8 @@ class XG_Container(SK_container):
                 acc += sk.metrics.mean_squared_error(truth, pred)
             # Return the negative MSE
             t_mse = acc / folds
+            # log hyperparameter setting to tb
+            # WARNING this creates a lot of files which can cause tb to crash
             h_writer.add_hparams({'max_depth': int(max_depth), 'gamma': gamma},
                                  {'hparam/time_split_test_rmse': t_mse})
             return -1. * t_mse
@@ -191,10 +212,12 @@ class XG_Container(SK_container):
     def register_bo_tcv(self, hyperparam_ranges, folds=5, h_writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
 
+        # data structure optimized for xgboost
         dtrain = xgb.DMatrix(data=x, label=y, nthread=2)
 
         def bo_tune_xgb(max_depth, gamma, lr, drop):
             prms = {
+                # we want dropout
                 'booster': 'dart',
                 "max_depth": int(max_depth),
                 "gamma": gamma,
@@ -205,6 +228,9 @@ class XG_Container(SK_container):
             }
 
             # cv_result = xgb.cv(prms, dtrain, 70, nfold=folds)
+
+            #  we want to perform our walkforward validation only from the half of the data
+            # this was done because the mse was dominated by early folds which were less relevant
             tss = sk.model_selection.TimeSeriesSplit(folds * 2)
 
             cv_result = xgb.cv(prms, dtrain, num_boost_round=200, nfold=folds, folds=list(tss.split(x))[folds:],
@@ -217,16 +243,18 @@ class XG_Container(SK_container):
 
         super().register_bo(hyperparam_ranges, bo_tune_xgb)
 
-    def cv_hyper_opt_bayesian(self, hyperparam_ranges=None, folds=5, s_writer=SummaryWriter(), resname="xgb_bo_res.p",
-                              iterations=0, h_writer=None, restart=False):
-        if h_writer is None:
-            h_writer = s_writer
+    def cv_hyper_opt_bayesian(self, hyperparam_ranges=None, s_writer=SummaryWriter(), resname="xgb_bo_res.p",
+                              iterations=0):
         if hyperparam_ranges is None:
-            hyperparam_ranges = {'max_depth': (3, 15),
-                                 'gamma': (0.01, 1.5)
-                                 }
+            hyperparam_ranges = {
+                'max_depth': (3, 8),
+                'gamma': (0.001, 5),
+                'lr': (0.0001, 1),
+                'drop': (0, .3)
+            }
         self.cv_hopt_bayesian(hyperparam_ranges, s_writer, resname, iterations)
 
+    # override to override resname
     def reload_progress(self, resname="xgb_bo_res.p"):
         super().reload_progress(resname)
 
@@ -234,8 +262,10 @@ class XG_Container(SK_container):
     #     f1, f2 = self.create_figures(hyperparam_ranges,bo)
     #     writer.add_figure("predicted_function_scatter", f2, global_step=1)
     #     writer.add_figure("predicted_function", f, global_step=1)
+
+    # perform walk forward cross validation
+    # because we are interested in all folds we do not apply the fold constraint seen in our hyperopt methods
     def tcv(self, folds=10, writer=SummaryWriter()):
-        # cv_result = xgb.cv(params, dtrain, num_boost_round=int(n_estimators), nfold=folds)
         tss = sk.model_selection.TimeSeriesSplit(folds)
         x, y = self.dataset.get_contig()
         m_list = []
@@ -250,6 +280,7 @@ class XG_Container(SK_container):
             writer.add_scalars("MSE_TCV", dict, i)
         return m_list
 
+    # get results of a trained predictor, mainly relevant for f scores and tree plot.
     def results_tb(self, writer=SummaryWriter()):
         x, y = self.dataset.get_contig()
         xt = x[self.t_inds]

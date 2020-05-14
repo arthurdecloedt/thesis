@@ -3,6 +3,7 @@ import datetime
 import json
 import logging as lg
 import os
+import warnings
 from os.path import join
 
 import numpy as np
@@ -14,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 
+# this class is a small container with some parts of a multiset,
 class ContigSet:
 
     def __init__(self, path='/data/leuven/332/vsc33219/data/Multiset') -> None:
@@ -29,6 +31,7 @@ class ContigSet:
         return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
 
 
+# parse data from the dtai source file
 def parse_moments(momentfile, rescale=False):
     momentsel = 4
     lg.info("Using dtai mvix30 data")
@@ -50,6 +53,7 @@ def parse_moments(momentfile, rescale=False):
     return dates_np, mom_array, scale, (mean, median)
 
 
+# parse data from cboe source, this will shift data so that we are predicting the next day iv
 def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shift=0):
     vxaapl = pd.read_csv(aaplfile, index_col=0, usecols=[0, 4], parse_dates=True).dropna()
     lg.info("Using cboe vxAAPL data")
@@ -66,6 +70,7 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
         vdates_np = np.array([np.datetime64(d.date()) for d in vdates])
         vix_array = vix[vix.columns[0]].to_numpy()
 
+        # we cant just shift when whe have the vix, we also have to shift the vix back and make sure we have all values.
         i_dates, dind, vind = np.intersect1d(dates_np, vdates_np, return_indices=True)
         vind = vind[:-max(shift, vix_shift)] + vix_shift
         dind = dind[:-max(shift, vix_shift)] + shift
@@ -85,6 +90,9 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
         return dates_np, vxaapl, 1, (np.mean(vxaapl), np.median(vxaapl))
 
 
+# this is the main dataset class, altough it's been optimized in the plus class
+# this class is still functional but is a lot slower than the plus class where the text embedding step has been
+# multithreaded
 class MultiSet(Dataset):
 
     def __init__(self, prefs, contig_resp=False):
@@ -107,19 +115,27 @@ class MultiSet(Dataset):
         # arrays with id's of preembedded picturees
         self.norms = np.ones(self.embedlen)
 
+        # we read the ANP classifications and embed the images into emotions
         self.init_imagefolder(preembedfolder)
 
+        # this function takes the most time, it evaluates sentiment with vadersentiment
         self.read_json_aapl()
+
+        # we only want days with enough dates
         if (True):
             vals, counts = np.unique(self.contig_dates, return_counts=True)
-            ttl = np.sum(counts < 15)
+            ttl = np.sum(counts < 10)
             vals = vals[counts < 10]
             self.date_arr = self.date_arr[np.invert(np.isin(self.date_arr, vals))]
-            lg.info("rejected %s dates for size (cutoff was 15)", ttl)
+            lg.info("rejected %s dates for size (cutoff was 10)", ttl)
+        # initialize array
         self.resp_arr = np.full(self.date_arr.shape, -1.)
+
+        # if we want the vix we have to parse it specially
         if self.vix:
             response_dates, response, self.scale, self.baselines, vix_arr = parse_vix(
                 self.prefs['vxaapl'], False, lvix=True, vixfile=self.prefs['vix'])
+            # we can only use days where we have both input and response (response might be shifted)
             _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
             self.vix_arr = np.full(self.date_arr.shape, -1.)
 
@@ -127,14 +143,18 @@ class MultiSet(Dataset):
         else:
             response_dates, response, self.scale, self.baselines = parse_vix(
                 self.prefs['vxaapl'], False)
+            # we can only use days where we have both input and response (response might be shifted)
+
             _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
         self.resp_arr[d_inds] = response[r_inds]
         self.resp_inds = d_inds
         self.training_idx, self.test_idx = [], []
-        self.date_id = np.argsort(self.contig_dates)
+        # our dates will have to be sorted, timsort because they are almost sorted and default is quicksort
+        self.date_id = np.argsort(self.contig_dates, kind='timsort')
         self.contig_vals = np.ascontiguousarray(self.contig_vals[self.date_id])
         self.contig_dates = np.ascontiguousarray(self.contig_dates[self.date_id])
 
+        # construct contig arrays if requested, this means this model can be used as contigset or save a contigset
         if self.has_contig:
             self.contig_resp = np.full(self.contig_dates.shape, -1.)
             self.contig_usable = np.full(self.contig_dates.shape, False)
@@ -165,13 +185,16 @@ class MultiSet(Dataset):
         indices = np.arange(l)
         self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
 
+    # saves a contig version of a model
     def save_contig(self, path='/data/leuven/332/vsc33219/data/Multiset'):
         np.save(join(path, 'contig_vals.npy'), self.contig_vals)
         np.save(join(path, 'contig_resp.npy'), self.contig_resp)
         np.save(join(path, 'contig_usable.npy'), self.contig_usable)
         lg.info('saved contig array')
 
+    # saves the whole model, old and had problems with casting
     def save(self, path='/data/leuven/332/vsc33219/data/Multiset'):
+        warnings.warn("probs doesn't cover all func", DeprecationWarning)
 
         np.save(join(path, 'contig_vals.npy'), self.contig_vals)
         np.save(join(path, 'contig_dates.npy'), self.contig_dates)
@@ -185,8 +208,11 @@ class MultiSet(Dataset):
         np.save(join(path, 'misc.npy'), [self.scale, self.embedlen])
         np.save(join(path, 'norms.npy'), self.norms)
 
+    # loads a whole model, old and had problems with casting
+
     @classmethod
     def from_file(cls, path='/data/leuven/332/vsc33219/data/Multiset'):
+        warnings.warn("probs doesn't cover all func", DeprecationWarning)
 
         obj = cls.__new__(cls)
         super(MultiSet, obj).__init__()
@@ -218,6 +244,7 @@ class MultiSet(Dataset):
 
         return obj
 
+    # saves embedding to tensorboard projection feature
     def write_embedding(self, writer: SummaryWriter, n_rows=2000):
 
         row_inds = np.random.randint(0, self.contig_ids.shape[0], n_rows)
@@ -225,8 +252,14 @@ class MultiSet(Dataset):
         rows_t = torch.from_numpy(rows)
         writer.add_embedding(rows_t, list(self.contig_dates[row_inds]), tag='Multiset: 24_mean_5 | 4_VADER')
 
+    # load np files and embeds anp's to plutchik dyads
+    # this function prob is due a reewrite, an multiprocessing shared mem ...
+    # rewrite was not considered a rewrite because it's not really a bottleneck
     def init_imagefolder(self, preembedfolder):
         lg.info("starting preembed data processing")
+
+        # the names of all files in the folder with the embeddings, the files where split because the total embedding
+        # is rather big (on the order of gb's)
         names = [f.name for f in os.scandir(preembedfolder) if f.is_file()]
         lg.info("got %s files", len(names))
         preem_dict_ids = {}
@@ -236,6 +269,8 @@ class MultiSet(Dataset):
         preem_dict_vals = {}
 
         for n in names:
+
+            # id's are saved as an int and thus in a different array and file
             if 'ids' in n:
                 s = n.split('_')
                 nr = s[1]
@@ -252,12 +287,17 @@ class MultiSet(Dataset):
                 file = os.path.join(preembedfolder, n)
                 vals = np.load(file)
 
+                # the classification vectors have to be embedded to be usefull
                 preem_dict_vals[nr] = self.process_anps(vals)
                 lg.debug('processed vals: %s', n)
 
             else:
                 lg.warning('Unexpected file: %s', n)
+
+        # the dict structure was the original one but its inefficient, we want the data in one contiguous slab
         lg.info("sorting and reallocating embedded data")
+
+        # adding all the data together
         interm_contig_vals = preem_dict_vals['0']
         interm_contig_ids = preem_dict_ids['0']
         for key, val in preem_dict_vals.items():
@@ -265,17 +305,21 @@ class MultiSet(Dataset):
                 continue
             interm_contig_ids = np.concatenate((interm_contig_ids, preem_dict_ids[key]))
             interm_contig_vals = np.concatenate((interm_contig_vals, val), 0)
-        inds = np.argsort(interm_contig_ids)
+        # we want to sort along id's, this will mostly be done already therefore timsort
+        inds = np.argsort(interm_contig_ids, kind="timsort")
         n = inds.shape[0]
         interm_contig_ids = interm_contig_ids[inds]
         interm_contig_vals = interm_contig_vals[inds]
-        self.norms = np.linalg.norm(interm_contig_vals, axis=0)
+        # this was a wrong way to normalize data, which is not even really neccessary,
+        # self.norms = np.linalg.norm(interm_contig_vals, axis=0)
         # interm_contig_vals = interm_contig_vals / self.norms
 
         # noinspection PyTypeChecker
         self.contig_dates = np.empty(n, dtype='datetime64[D]')
 
         self.contig_vals = np.concatenate((interm_contig_vals, np.zeros((n, 4))), 1)
+
+        # we want to be sure that its one array for speed
         self.contig_ids = np.ascontiguousarray(interm_contig_ids)
         lg.info("reallocation done ")
 
@@ -288,6 +332,8 @@ class MultiSet(Dataset):
         #     self.preem_borders[u] = (self.preem_dict_ids[u][0], self.preem_dict_ids[u][-1])
         #     lg.debug('new borders: %s',self.preem_borders[u])
 
+    # this function takes ANP classification vectors
+    # it embeds them in pluchik emotions according to an embedding by MVSO project
     def process_anps(self, vals):
         lg.debug("starting ANP data processing")
         top_nr = 5
@@ -299,6 +345,7 @@ class MultiSet(Dataset):
         # get emotional embedding for all ANP's
         with open(em_file_n, 'r') as csvfile:
             reader = csv.reader(csvfile, delimiter=',')
+            # skip first line
             next(reader)
             for row in reader:
                 name = row[0]
@@ -308,6 +355,8 @@ class MultiSet(Dataset):
                 # check if ANP in class (some arent)
                 if loc.shape != (0,):
                     ems[loc[0]] = num_vals
+                else:
+                    lg.warning("found a ANP emotional embedding (%s) not in classes", name)
         proc_val = np.zeros((len(vals), self.embedlen))
         lg.debug("loading ANP embeddings, using top %s ANPs", top_nr)
         # Convert anp classification into emotion embedding
@@ -315,8 +364,10 @@ class MultiSet(Dataset):
         ind = -top_nr
 
         for n in range(len(vals)):
+            # we select the top_nr highest scoring ANP's for this sample
             top_inds = np.argpartition(vals[n], ind)[ind:]
 
+            # we sum the value
             proc_val[n] = np.sum(ems[top_inds], axis=0)
             # for ti in top_inds:
             #     proc_val[n] += ems[ti]
@@ -324,18 +375,25 @@ class MultiSet(Dataset):
 
     def __len__(self):
         # Here, we need to return the number of samples in this dataset.
-        s = 0
-        len(self.contig_ids)
+        s = len(self.contig_ids)
         return s
 
+    # this function returns the data for a certain date
+    # param index: int, index of dat in date_arr
     def __getitem__(self, index):
         lg.debug("getting item: %s", index)
         date = self.date_arr[index]
         # lg.debug(date)
+
+        # we look for the left and side for this date to appear,
+        # this is done by a binary search because the data is sorted
         ind_0 = np.searchsorted(self.contig_dates, date, side="left")
         ind_n = np.searchsorted(self.contig_dates, date, side='right')
         if ind_0 >= self.contig_vals.shape[0] or ind_n <= 0:
             raise ValueError('date not found')
+        # here we reshape the data into the right tensor for our network
+        # shape = (1 x 28 x sample_size)
+        # first dim is batchsize but we have to keep this one because sample_size varies
         data = self.contig_vals[ind_0:ind_n]
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
@@ -346,6 +404,7 @@ class MultiSet(Dataset):
 
         return data_tens, resp_t, None
 
+    # write embedding down for other embedding experiment
     def log_embedding(self, writer: SummaryWriter, dim=5000):
 
         assert self.has_contig
@@ -356,6 +415,7 @@ class MultiSet(Dataset):
         writer.add_embedding(data_tens, global_step=0, tag='MVSO_top5_avg')
         writer.flush()
 
+    # get the contig data for this dataset, used in SK_Containers
     def get_contig(self):
         assert self.has_contig
         return self.contig_vals[self.contig_usable], self.contig_resp[self.contig_usable]
@@ -364,6 +424,10 @@ class MultiSet(Dataset):
     def plus(self):
         return False
 
+    # this function dominates time, and is optimized in plus model,
+    # it reads tweets from a file, determines if they have an image in the set, if they do they are put in the dataset
+    # mostly kept for future reference
+    # the way this works is documented in the multiset_plus.py subclass, it works similar but is optimized
     def read_json_aapl(self, ):
         # {"_id":{"$oid":"5d7041dcd6c2261839ecf58f"},"username":"computer_hware","date":{
         # "$date":"2016-04-12T17:10:12.000Z"},"retweets":0,"favorites":0,"content":"#Apple iPhone SE release date, price,
@@ -371,12 +435,10 @@ class MultiSet(Dataset):
         # "mentions":"","hashtags":"#Apple","replyTo":"","id":"719905464880726018",
         # "permalink":"https://twitter.com/computer_hware/status/719905464880726018"}
         contig_ids = self.contig_ids
-        # check if we are running in text/image pair only
         lg.info("starting json processing in only_img mode")
         start_date = datetime.date(2011, 12, 29)
         end_date = datetime.date(2019, 9, 20)
         delta = end_date - start_date
-
         date_arr = [start_date + datetime.timedelta(days=i) for i in range(delta.days + 1)]
 
         date_arr_np = np.array([np.datetime64(d) for d in date_arr])
@@ -423,6 +485,7 @@ class MultiSet(Dataset):
         self.date_arr = date_arr_np
 
 
+# this is a wrapper around a multiset that divides its samples into bins of similar size
 class Multi_Set_Binned(Dataset):
 
     @property
@@ -444,7 +507,6 @@ class Multi_Set_Binned(Dataset):
         else:
             assert prefs is not None
             self.inner = MultiSet(prefs)
-        # ok so this is a bit convoluted
         # bascially we want to split the datapoints as fairly as possible, and not into bins of 20
         # getting the inds and counts of unique dates
         lg.info('binning values')
@@ -456,7 +518,7 @@ class Multi_Set_Binned(Dataset):
         binsnr = np.asarray(np.ceil(np.true_divide(cnts, 20, out=np.ones(cnts.shape), where=cnts >= 30)), dtype='int64')
         # getting the the low binsize for all counts
         bnsize_u = np.asarray(np.floor_divide(cnts, binsnr), dtype='int64')
-        # getting the amount of thimes the low value will be repeated for every date
+        # getting the amount of times the low value will be repeated for every date
         # the idea is that ( ubus_nr * bnsize_u ) + ((binsnr - ubus_nr ) * (bnsize +1) = cnts
         ubus_nr = (binsnr * (bnsize_u + 1)) - cnts
         counter = 0
@@ -493,11 +555,13 @@ class Multi_Set_Binned(Dataset):
         self.c = counter
         lg.info('rejected %s dates/bins for size', s_counter)
 
+    # this will shuffle the bins but the relatioin bins <-> dates will be kept
     def shuffle_bins(self):
         assert self.reshuffle
         for i in range(len(self.inds)):
             np.random.shuffle(self.bins[self.inds[i]:self.inds[i] + self.cnts[i]])
 
+    # get an item, works very similar to the multiset one but checks for bins
     def __getitem__(self, index):
         inner = self.inner
         lg.debug("getting item: %s", index)
@@ -537,4 +601,3 @@ class Multi_Set_Binned(Dataset):
 
     def __len__(self) -> int:
         return self.inner.__len__()
-
