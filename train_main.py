@@ -5,7 +5,7 @@ import yaml
 from torch import optim, nn
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import dataprocessing, multiset, container, embed_nets
+from utils import data_utils, container, embed_nets, multiset_plus
 
 # def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 #     log = file if hasattr(file, 'write') else sys.stderr
@@ -27,7 +27,7 @@ consoleHandler = lg.StreamHandler()
 consoleHandler.setFormatter(logFormatter)
 rootLogger.addHandler(consoleHandler)
 
-net = embed_nets.PoolingNetPlus().double()
+net = embed_nets.Pooling_Net(multi_loss=True).double()
 # net = embed_nets.Pooling_Net().double()
 
 net.train()
@@ -36,9 +36,10 @@ with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
     lg.info("loading dataset")
 
-trainset = multiset.MultiSet(prefs, contig_resp=True)
-trainset.save_contig()
-exit(0)
+trainset = multiset_plus.MultiSetCombined(prefs, contig_resp=True)
+trainset.make_orig()
+
+# trainset = multiset.MultiSet(prefs)
 # lg.info("saving dataset")
 # trainset.save()
 
@@ -48,32 +49,31 @@ exit(0)
 
 # trainset = multiset.MultiSet(prefs)
 trainset.create_valsplit(.8)
-tsampler = dataprocessing.MultiSplitSampler(trainset, True)
-vsampler = dataprocessing.MultiSplitSampler(trainset, False)
+tsampler = data_utils.MultiSplitSampler(trainset, True)
+vsampler = data_utils.MultiSplitSampler(trainset, False)
 
 writer = SummaryWriter()
 
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=0, sampler=tsampler)
 valloader = torch.utils.data.DataLoader(trainset, batch_size=1, num_workers=0, sampler=vsampler)
-#
+
 criterion = nn.MSELoss()
-optimizer = optim.SGD(net.parameters(), lr=0.0001)
+optimizer = optim.Adam(net.parameters())
 
 # data, resp, _ = next(iter(trainloader))
 # while data.shape[2] < 10:
 #     data, resp, _ = next(iter(trainloader))
 # writer.add_graph(net, data)
 
-data = (torch.ones((1, 28, 50)).double(), torch.ones((1, 4, 500)).double())
-data1 = torch.ones((1, 28, 50)).double()
+data = (torch.ones((1, 28, 50)).double())
 
 writer.add_graph(net, data)
 writer.flush()
 # optimizers = [optim.SGD(n.parameters(), lr=0.0001) for n in nets]
 
 cont = container.Net_Container(net, trainloader, optimizer, criterion, True, valloader, s_writer=writer, vix=True,
-                               plus=True)
+                               multiloss=True)
 # #
 
-# cont.train(200)
+cont.train(5)
 # # m_cont = embed_nets.Multi_Net_Container(nets, trainloader, optimizers, criterion, True, valloader, writer)

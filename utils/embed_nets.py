@@ -3,6 +3,38 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# These networks and concepts are better explained in my master thesis,
+# in the chapters Methods,  and Experiment: Deep Learning
+
+
+# performs a distributive pooling operation as described in chapter Methods
+# Important! written as a script module because it performs data dependent control flow
+class PlusPoolLayer(torch.jit.ScriptModule):
+    def __init__(self):
+        super().__init__()
+        self.name = 'Plus_Pool_Layer'
+
+    @torch.jit.script_method
+    def forward(self, input_t, input_m):
+        output_size = input_m.size(2)
+        max_adpooled_t = F.adaptive_max_pool1d(input_t, output_size=output_size)
+        avg_adpooled_t = F.adaptive_avg_pool1d(input_t, output_size=output_size)
+        return torch.cat((max_adpooled_t, avg_adpooled_t, input_m), 1)
+
+
+# wrapper for visualizing pluspool layer
+class PPWrapper(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.pp = PlusPoolLayer()
+
+    def forward(self, x, y):
+        return self.pp(x, y)
+
+
+# this network performs a deep unordered composition,
+# it has convolutional embedding layers and linear prosprocessing layers
 class Mixed_Net(nn.Module):
     def __init__(self, name="mixed_net"):
         super(Mixed_Net, self).__init__()
@@ -38,6 +70,7 @@ class Mixed_Net(nn.Module):
     #     return num_features
 
 
+# this class only performs embedding, no postprocessing
 class Pre_net(nn.Module):
 
     def __init__(self, name="pre_net"):
@@ -49,6 +82,7 @@ class Pre_net(nn.Module):
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         self.name = name
 
+    # resnet like residual connections
     def forward(self, x):
         xc = self.c1(x)
         xc = F.relu(xc)
@@ -65,6 +99,7 @@ class Pre_net(nn.Module):
         return x
 
 
+# this layer performs a combined avg and max pool operation
 class CombinedAdaptivePool(nn.Module):
 
     def __init__(self, n):
@@ -78,8 +113,21 @@ class CombinedAdaptivePool(nn.Module):
         return x
 
 
-class PadPoolLayer(nn.Module):
+class AttLayer(nn.Module):
 
+    def __init__(self, c_in, n_heads):
+        super().__init__()
+        self.attn = nn.Conv1d(c_in, n_heads, 1)
+        self.agg = nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, x):
+        x_r = F.relu(self.attn(x))
+        x_f = x_r.mean().expand_as(x_r)
+        return x_f
+
+
+# this layer performs a pooling whit stride one and kernel size 11, circular padding is used to keep dims cst
+class PadPoolLayer(nn.Module):
     def __init__(self):
         super().__init__()
         self.name = "Pad_Pool_Layer"
@@ -87,38 +135,17 @@ class PadPoolLayer(nn.Module):
         self.pool_m = nn.MaxPool1d(11, 1, ceil_mode=True)
 
     def forward(self, x):
+        # cicular padding to allow vals on the ends of vectors to interact
         xp = F.pad(x, (5, 5), 'circular')
         x = torch.cat((x, self.pool_m(xp), self.pool_a(xp)), 1)
         return x
 
 
-class PlusPoolLayer(torch.jit.ScriptModule):
-
-    def __init__(self):
-        super().__init__()
-        self.name = 'Plus_Pool_Layer'
-
-    @torch.jit.script_method
-    def forward(self, input_t, input_m):
-        output_size = input_m.size(2)
-        max_adpooled_t = F.adaptive_max_pool1d(input_t, output_size=output_size)
-        avg_adpooled_t = F.adaptive_avg_pool1d(input_t, output_size=output_size)
-        return torch.cat((max_adpooled_t, avg_adpooled_t, input_m), 1)
-
-
-class PPWrapper(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.pp = PlusPoolLayer()
-
-    def forward(self, x, y):
-        return self.pp(x, y)
-
-
+# this network tries to let samples interact by pooling and concatting them with a pad pool layer.
 class Pooling_Net(nn.Module):
-    def __init__(self, name="pooling_net", n_pp=4, n_aggr=1, emb_sz=28):
+    def __init__(self, name="pooling_net", n_pp=4, n_aggr=1, emb_sz=28, multi_loss=False):
         super().__init__()
+        self.do = nn.Dropout(0.3)
         self.c1 = nn.Conv1d(3 * emb_sz, 20, 1)
 
         self.pad_pools = nn.ModuleList([PadPoolLayer() for f in range(n_pp)])
@@ -128,19 +155,27 @@ class Pooling_Net(nn.Module):
         self.c4 = nn.Conv1d(30, 10, 1)
 
         self.aggregate = CombinedAdaptivePool(n_aggr)
-        self.flatten = nn.Flatten()
         self.linear = nn.Linear(2 * n_aggr * (10 + 28), 10)
         self.out = nn.Linear(10, 1)
+        self.multi_loss = multi_loss
+        if self.multi_loss:
+            self.ctl = nn.Conv1d(38, 1, 1)
 
         self.name = name
 
     def forward(self, x):
-        x = self.embed(x)
-        x = self.aggregate(x)
+        x = self.do(x)
+        # embedding part
+        x_1 = self.embed(x)
+        x = self.aggregate(x_1)
+        # this is the postprocessing part
         x = self.linear(x)
         x = F.relu(x)
         x = self.out(x)
-        return x
+        if self.multi_loss and self.train:
+            return x, self.ctl(x_1)
+        else:
+            return x
 
     def embed(self, x):
         xo = x.clone()
@@ -156,10 +191,11 @@ class Pooling_Net(nn.Module):
         return x
 
 
+# pooling net with distributive pooling of monomodal data
 class PoolingNetPlus(Pooling_Net):
 
-    def __init__(self, name="pooling_net_plus", n_aggr=1):
-        super().__init__(name, emb_sz=32)
+    def __init__(self, name="pooling_net_plus", n_aggr=1, multi_loss=False):
+        super().__init__(name, emb_sz=32, multi_loss=multi_loss)
         self.ct1 = nn.Conv1d(4, 2, 1)
         self.ct2 = nn.Conv1d(4, 3, 1)
         self.pool_plus = PlusPoolLayer()
@@ -169,14 +205,18 @@ class PoolingNetPlus(Pooling_Net):
     def forward(self, x, x_t):
         x_tp = F.relu(self.ct1(x_t))
         x = self.pool_plus(x_tp, x)
-        x = self.embed(x)
+        x_1 = self.embed(x)
         x_t = F.relu(self.ct2(x_t))
-        x = self.aggregate(x)
+        x = self.aggregate(x_1)
         x_t = self.aggregate(x_t)
         x = torch.cat((x, x_t))
         x = F.relu(self.linear(x))
+        if self.multi_loss:
+            return self.out(x), self.ctl(x_1)
         return self.out(x)
 
+
+# a pre net only using text data for evaluating multimodal performance
 class Pre_Net_Text(nn.Module):
 
     def __init__(self, name="pre_net_text"):
@@ -201,7 +241,6 @@ class Pre_Net_Text(nn.Module):
         x = self.linear(x)
         x = F.relu(x)
         x = self.out(x)
-
         return x
 
     # def num_flat_features(self, x):
@@ -212,3 +251,26 @@ class Pre_Net_Text(nn.Module):
     #     return num_features
 
 
+class AttNet(nn.Module):
+    def __init__(self, name="AttNet", n_heads=3):
+        super().__init__()
+        chans = [28, 20, 15, 10]
+        self.name = name
+        self.c_layers = nn.ModuleList()
+        self.a_layers = nn.ModuleList()
+        for i, s_in in enumerate(chans, 1):
+            self.a_layers.append(AttLayer(s_in, n_heads))
+            self.c_layers.append(nn.Conv1d(s_in + n_heads, 5 if i == len(chans) else chans[i], 1))
+
+        self.agg = CombinedAdaptivePool(1)
+        self.out = nn.Linear(10, 1)
+
+    def forward(self, x):
+
+        for conv, att in zip(self.c_layers, self.a_layers):
+            x_a = att(x)
+            x = torch.cat((x, x_a), 1)
+            x = F.relu(conv(x))
+
+        x = self.agg(x)
+        return self.out(x)
