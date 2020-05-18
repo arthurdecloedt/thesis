@@ -1,9 +1,8 @@
 import logging as lg
 
 import yaml
-from torch import optim, nn
 
-from utils import container, embed_nets, multiset_plus
+from utils import container
 
 # def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 #     log = file if hasattr(file, 'write') else sys.stderr
@@ -17,7 +16,7 @@ logFormatter = lg.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.
 rootLogger = lg.getLogger()
 rootLogger.setLevel(lg.INFO)
 
-fileHandler = lg.FileHandler("train_binned.log")
+fileHandler = lg.FileHandler("full_evaluation_1.log")
 fileHandler.setFormatter(logFormatter)
 rootLogger.addHandler(fileHandler)
 
@@ -29,7 +28,6 @@ with open('resources/preferences.yaml') as f:
     prefs = yaml.load(f, Loader=yaml.FullLoader)
     lg.info("loading dataset")
 
-trainset = multiset_plus.MultiSetPlus(prefs, contig_resp=True)
-cont = container.TS_validation_net_container(trainset, embed_nets.AttNet, nn.MSELoss, optim.Adam)
+hyper_cont = container.TS_validation_net_hyper(prefs)
 
-cont.perform_ts_val(75, folds=10, f_skip=5)
+hyper_cont.perform_run(prefs['folds'], prefs['f_skip'], prefs['epochs'])

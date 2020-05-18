@@ -95,6 +95,7 @@ class MultiSplitSampler(MultiSampler):
 class MultiBinSampler(Sampler):
 
     def __init__(self, data_source: Multi_Set_Binned):
+        lg.warning("using binned multiset, but behaviour is not verified since multiset changes")
         super().__init__(data_source)
         lg.info("Binsampler supplied with %s bins", data_source.c)
         self.data_source = data_source
@@ -132,6 +133,7 @@ class MultiBinSampler(Sampler):
         return self.len
 
 
+# this class defines a generator that yields train/val splits for successive folds
 class MultiTSSampler_gen():
 
     def __init__(self, data_source: MultiSet, folds=10, f_skip=5):

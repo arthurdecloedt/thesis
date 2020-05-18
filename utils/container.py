@@ -12,7 +12,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import embed_nets, data_utils
+from utils import embed_nets, data_utils, multiset_plus
 from utils.multiset import MultiSet, Multi_Set_Binned
 
 
@@ -233,7 +233,7 @@ class TS_validation_net_container():
             else:
                 self.dataset_b = dataset_b
 
-    def perform_ts_val(self, max_epochs, early_stopping=False, folds=10, f_skip=5, resultf=None):
+    def perform_ts_val(self, max_epochs, early_stopping=False, folds=10, f_skip=5, resultf=None, log_eval=True):
         if early_stopping:
             lg.warning("early stopping not yet implemented")
         self.early_stopping = False
@@ -241,7 +241,7 @@ class TS_validation_net_container():
             if self.binned else data_utils.MultiTSSampler_gen(self.dataset, folds, f_skip)
 
         assert folds > f_skip
-        lg.info("starting walk forward validation")
+        lg.info("starting walk forward validation for %s", self.net_c.__name__)
         lg.info("%s folds, %s first folds skipped -> %s actual runs", folds, f_skip, folds - f_skip)
 
         for ind, (train_sampler, val_sampler) in enumerate(sampler_gen.get_samplers(), 1):
@@ -253,40 +253,97 @@ class TS_validation_net_container():
             crit = self.crit_c(*self.crit_arg)
             net = self.net_c(*self.net_arg).double()
             net: torch.nn.Module
-            if resultf is None:
-                resultf = "results_tsv_%s.p" % net.name
-
+            resultf = "results_tsv_%s.p" % net.name
             opt = self.optimizer_c(net.parameters(), *self.opt_arg)
             s_writer = SummaryWriter()
             cont = Net_Container(net, trainloader, opt, crit, True, valloader, vix=False,
                                  plus=isinstance(net, embed_nets.PoolingNetPlus),
-                                 multiloss=isinstance(net, embed_nets.Pooling_Net) and net.multi_loss,
+                                 multiloss=hasattr(net, 'multi_loss') and net.multi_loss,
                                  s_writer=s_writer)
             lg.info("starting run %s", ind)
-            cont.train(epochs=max_epochs)
+            cont.train(epochs=max_epochs, supress_lg_info=True)
             lg.info("run % finished, results:", ind)
             ev_res = cont.evaluate(suffix="_tsv")
-            for name, val in ev_res.items():
-                lg.info("%s : %s", name, val)
+            if log_eval:
+                for name, val in ev_res.items():
+                    lg.info("%s : %s", name, val)
             self.results.append(ev_res)
             with open(resultf, 'wb') as file:
                 pickle.dump(self.results, file)
         sums = dict.fromkeys(self.results[0].keys(), 0)
         for i, res in enumerate(self.results, 1):
-            lg.info("iter %s results:", i)
+            if log_eval:
+                lg.info("iter %s results:", i)
             for name, val in res.items():
-                lg.info("%s : %s", name, val)
+                if log_eval:
+                    lg.info("%s : %s", name, val)
                 sums[name] += val
         means = {}
         for name, val in sums.items():
             mval = val / len(self.results)
             means[name + ' _ mean'] = mval
-            lg.info("mean %s : %s", name, mval)
+            if log_eval:
+                lg.info("mean %s : %s", name, mval)
         self.results.append(means)
         with open(resultf, 'wb') as file:
             pickle.dump(self.results, file)
 
         lg.info("tsv done")
+
+
+class TS_validation_net_hyper():
+    def __init__(self, prefs: dict):
+        super().__init__()
+        lg.info("configuring hyper container")
+        lg.debug(prefs)
+        crits = {
+            'mse': torch.nn.MSELoss,
+            'huber': torch.nn.SmoothL1Loss
+        }
+        opts = {
+            'adam': torch.optim.Adam,
+            'sgd': torch.optim.SGD,
+            'adamw': torch.optim.AdamW
+        }
+        self.prefs = prefs
+        assert 'nets' in prefs
+        if 'crit' in prefs:
+            self.crit_c = crits[prefs["crit"][0]]
+        else:
+            self.crit_c = torch.nn.MSELoss
+        if 'opt' in prefs:
+            self.opt_c = opts[prefs['opt'][0]]
+        else:
+            self.opt_c = torch.optim.SGD
+        self.net_l = []
+        for net in prefs['nets']:
+            net_c = getattr(embed_nets, net[0])
+            net_args_pos = net[1] if net[1] is not None else ()
+            net_args_named = net[2] if net[2] is not None else {}
+            assert isinstance(net_args_pos, tuple) and isinstance(net_args_named, dict)
+            net_c = partial(net_c, *net_args_pos, **net_args_named)
+            net_c.__name__ = net_c.func.__name__
+            self.net_l.append(net_c)
+
+        lg.info('configuration done, got %s net_configurations', len(self.net_l))
+        self.dataset_c = multiset_plus.MultiSetCombined(prefs, contig_resp=True)
+        self.dataset_m = multiset_plus.MultiWrapper.construct(self.dataset_c)
+
+    def perform_run(self, folds, f_skip, max_epochs):
+
+        lg.info("performing hyper run")
+        l = len(self.net_l)
+        folds_t = folds * l
+        epochs_t = folds_t * max_epochs
+        lg.info("will perform %s validations, %s folds, %s epochs", l, folds_t, epochs_t)
+        for net in self.net_l:
+            if hasattr(net.func, 'plus') and net.func.plus:
+                set = self.dataset_c
+            else:
+                set = self.dataset_m
+            tss_cont = TS_validation_net_container(set, net, self.crit_c, self.opt_c)
+
+            tss_cont.perform_ts_val(max_epochs, folds=folds, f_skip=f_skip)
 
 # class Multi_Net_Container(Net_Container):
 #

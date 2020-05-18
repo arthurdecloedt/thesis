@@ -3,6 +3,7 @@ import json
 import logging as lg
 import multiprocessing as mp
 import sys
+import warnings
 from multiprocessing import Pool
 from multiprocessing.managers import SharedMemoryManager
 
@@ -23,6 +24,28 @@ twt_embed_np_g = None
 shape_twt_dates_g = (600000,)
 shape_twt_embed_g = (600000, 4)
 multi_only = None
+
+
+class MultiWrapper(MultiSet):
+
+    def __init__(self, prefs, contig_resp=False):
+        warnings.warn("You are instantiating this class without a combined multiset, this is not realy what you want")
+        self.inner = MultiSetCombined(prefs, contig_resp)
+
+    def __getattr__(self, attr):
+        if attr not in self.__dict__:
+            return getattr(self.inner, attr)
+        return super().__getattr__(attr)
+
+    def __getitem__(self, index):
+        return self.inner._get_multi_only(index)
+
+    @classmethod
+    def construct(cls, dataset):
+        assert isinstance(dataset, MultiSetCombined)
+        obj = cls.__new__(cls)
+        obj.inner = dataset
+        return obj
 
 
 class MultiSetPlus(MultiSet):
@@ -95,7 +118,6 @@ class MultiSetPlus(MultiSet):
                 np.copyto(self.contig_vals, vals_np)
                 np.copyto(self.contig_dates, dates_np)
                 un = np.unique(d_arr)
-                print(np.count_nonzero(un))
                 # copying the embedded tweets into array
         dates = date_arr_np.shape[0]
         d_arr = np.intersect1d(date_arr_np, un)
@@ -112,9 +134,6 @@ class MultiSetCombined(MultiSet):
     def plus(self):
         return True
 
-    def make_orig(self):
-        self.orig = True
-
     def __init__(self, prefs, contig_resp=False, n_procs=30):
         self.contig_t_embed = None
         self.contig_t_dates = None
@@ -122,10 +141,11 @@ class MultiSetCombined(MultiSet):
         self.orig = False
         super().__init__(prefs, contig_resp)
 
+    def _get_multi_only(self, index):
+        return super().__getitem__(index)
+
     def __getitem__(self, index):
         x = super().__getitem__(index)
-        if self.orig:
-            return x
         date = self.date_arr[index]
         ind_0 = np.searchsorted(self.contig_t_dates, date, side="left")
         ind_n = np.searchsorted(self.contig_t_dates, date, side='right')
@@ -207,7 +227,6 @@ class MultiSetCombined(MultiSet):
                 np.copyto(self.contig_vals, vals_np)
                 np.copyto(self.contig_dates, dates_np)
                 un = np.unique(d_arr)
-                print(np.count_nonzero(un))
                 # copying the embedded tweets into array
                 twt_dates_np = np.ndarray(shape=shape_twt_dates_g, dtype=self.contig_dates.dtype,
                                           buffer=twt_dates_sm.buf)
@@ -216,19 +235,15 @@ class MultiSetCombined(MultiSet):
                 self.contig_t_embed = np.copy(twt_embed_np)
 
         dates = date_arr_np.shape[0]
-        print(d_arr)
         d_arr = np.intersect1d(date_arr_np, un)
         n_null = dates - d_arr.shape[0]
 
         t_inds = np.isin(self.contig_t_dates, date_arr_np)
         # we want timsort coz almost sorted
         t_sort = np.argsort(self.contig_t_dates[t_inds], kind="stable")
-        print(self.contig_t_embed.shape, self.contig_t_dates.shape)
 
         td_interm = self.contig_t_dates[t_inds]
         te_interm = self.contig_t_embed[t_inds]
-        print(te_interm.shape)
-        print(td_interm.shape)
         self.contig_t_dates = np.ascontiguousarray(td_interm[t_sort])
         self.contig_t_embed = np.ascontiguousarray(te_interm[t_sort])
 
@@ -246,7 +261,7 @@ def setup_subproces_all(contig_tw_date_sm, contig_tw_embed_sm, contig_vals_sm, c
 
     twt_date_np_g = np.ndarray(shape=shape_twt_dates_g, dtype='datetime64[D]', buffer=contig_tw_date_sm.buf)
     twt_embed_np_g = np.ndarray(shape=shape_twt_embed_g, buffer=contig_tw_embed_sm.buf)
-    multi_only = True
+    multi_only = False
 
 
 def setup_subprocess_plus(contig_vals_sm, contig_id_sm, contig_date_sm, shape_id,
