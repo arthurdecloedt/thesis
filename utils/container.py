@@ -6,6 +6,7 @@ from functools import partial
 from typing import Optional
 
 import numpy as np
+import scipy.stats as scistat
 import sklearn.metrics as skm
 import torch
 from torch import nn
@@ -88,22 +89,30 @@ class Net_Container:
         truths_v = ds.unscale(truths_v)
         truths_t = ds.unscale(truths_t)
 
+        def corp(x, y):
+            return scistat.pearsonr(x, y)[0]
+
+        def corsp(x, y):
+            return scistat.spearmanr(x, y)[0]
+
         if metrics is None:
             metrics = {
                 "MSE": skm.mean_squared_error,
                 "MAE": skm.mean_absolute_error,
-                "RMSE": partial(skm.mean_squared_error, squared=False)
+                "RMSE": partial(skm.mean_squared_error, squared=False),
+                "Pearson Corr": corp,
+                "Spearman Rank Corr": corsp
             }
         ev_res = {}
         tot_pred = np.concatenate((preds_t, preds_v)).flatten()
         tot_truth = np.concatenate((truths_t, truths_v)).flatten()
 
-        self.s_writer.add_histogram("train_multi_p", preds_t)
-        self.s_writer.add_histogram("train_multi_t", truths_t)
-        self.s_writer.add_histogram("ttl_multi_p", tot_pred)
-        self.s_writer.add_histogram("ttl_multi_t", tot_truth)
-        self.s_writer.add_histogram("val_multi_p", preds_v)
-        self.s_writer.add_histogram("val_multi_t", truths_v)
+        # self.s_writer.add_histogram("train_multi_p", preds_t)
+        # self.s_writer.add_histogram("train_multi_t", truths_t)
+        # self.s_writer.add_histogram("ttl_multi_p", tot_pred)
+        # self.s_writer.add_histogram("ttl_multi_t", tot_truth)
+        # self.s_writer.add_histogram("val_multi_p", preds_v)
+        # self.s_writer.add_histogram("val_multi_t", truths_v)
 
         for name, fun in metrics.items():
             ev_res[name + '_train' + suffix] = fun(truths_t, preds_t)
@@ -244,6 +253,10 @@ class TS_validation_net_container():
         assert folds > f_skip
         lg.info("starting walk forward validation for %s", self.net_c.__name__)
         lg.info("%s folds, %s first folds skipped -> %s actual runs", folds, f_skip, folds - f_skip)
+        if resultf is None:
+            resultf = "results_tsv_%s.p" % self.net_c.__name__
+        else:
+            resultf = resultf + '_%s.p' % self.net_c.__name__
 
         for ind, (train_sampler, val_sampler) in enumerate(sampler_gen.get_samplers(), 1):
             lg.info('initializing run %s', ind)
@@ -253,10 +266,11 @@ class TS_validation_net_container():
 
             crit = self.crit_c(*self.crit_arg)
             temp_res = []
+            mse_min = math.inf
             for r in range(repeat):
+
                 net = self.net_c(*self.net_arg).double()
                 net: torch.nn.Module
-                resultf = "results_tsv_%s.p" % net.name
                 opt = self.optimizer_c(net.parameters(), *self.opt_arg)
                 s_writer = SummaryWriter()
                 cont = Net_Container(net, trainloader, opt, crit, True, valloader, vix=False,
@@ -273,12 +287,19 @@ class TS_validation_net_container():
                 temp_res.append(ev_res)
                 # with open(resultf, 'wb') as file:
                 #     pickle.dump(self.results, file)
-            mins = dict.fromkeys(temp_res[0].keys(), math.inf)
-            for res in temp_res:
-                for k in mins:
-                    if mins[k] > res[k]:
-                        mins[k] = res[k]
-            self.results.append(mins)
+            mse_min = math.inf
+            min_res = -1
+            for i, res in enumerate(temp_res):
+                if res['MSE_val_tsv'] < mse_min:
+                    mse_min = res['MSE_val_tsv']
+                    min_res = i
+            if min_res == -1:
+                raise RuntimeWarning("could not get a min")
+
+            self.results.append(temp_res[min_res])
+            with open(resultf, 'wb') as file:
+                pickle.dump(self.results, file)
+
         sums = dict.fromkeys(self.results[0].keys(), 0)
         for i, res in enumerate(self.results, 1):
             if log_eval:
@@ -344,7 +365,7 @@ class TS_validation_net_hyper():
         l = len(self.net_l)
         folds_t = folds * l * repeats
         epochs_t = folds_t * max_epochs
-        lg.info("will perform %s validations, %s repeats %s folds, %s epochs", l, folds_t, epochs_t, repeats)
+        lg.info("will perform %s validations, %s repeats %s folds, %s epochs", l, repeats, folds_t, epochs_t)
         for net in self.net_l:
             if hasattr(net.func, 'plus') and net.func.plus:
                 set = self.dataset_c
@@ -352,7 +373,8 @@ class TS_validation_net_hyper():
                 set = self.dataset_m
             tss_cont = TS_validation_net_container(set, net, self.crit_c, self.opt_c)
 
-            tss_cont.perform_ts_val(max_epochs, folds=folds, f_skip=f_skip, repeat=repeats)
+            tss_cont.perform_ts_val(max_epochs, folds=folds, f_skip=f_skip, repeat=repeats,
+                                    resultf=self.prefs['resultf'] if 'resultf' in self.prefs else None)
 
 # class Multi_Net_Container(Net_Container):
 #

@@ -33,6 +33,45 @@ class PPWrapper(nn.Module):
         return self.pp(x, y)
 
 
+class Mixed_Net_Res(nn.Module):
+    def __init__(self, name="mixed_net_res"):
+        super().__init__()
+        self.do = nn.Dropout(0.3)
+
+        self.c1 = nn.Conv1d(28, 28, 1)
+        self.c2 = nn.Conv1d(28, 28, 1)
+        self.c3 = nn.Conv1d(28, 28, 1)
+        self.c4 = nn.Conv1d(28, 28, 1)
+
+        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
+        self.max_pool = torch.nn.AdaptiveMaxPool1d(1)
+        self.linear = nn.Linear(56, 10)
+        self.out = nn.Linear(10, 1)
+        self.name = name
+
+    def forward(self, x):
+        x = self.do(x)
+        xc = self.c1(x)
+        xc = F.relu(xc)
+        x = torch.add(x, xc)
+        xc = self.c2(x)
+        xc = F.relu(xc)
+
+        x = torch.add(x, xc)
+        xc = self.c3(x)
+        xc = F.relu(xc)
+        x = torch.add(x, xc)
+        x = self.c4(x)
+        x = F.relu(x)
+        x1 = self.avg_pool(x)
+        x2 = self.max_pool(x)
+        x = torch.cat((x1.squeeze(), x2.squeeze()))
+        x = self.linear(x)
+        x = F.relu(x)
+        x = self.out(x)
+        return x
+
+
 # this network performs a deep unordered composition,
 # it has convolutional embedding layers and linear prosprocessing layers
 class Mixed_Net(nn.Module):
@@ -57,9 +96,6 @@ class Mixed_Net(nn.Module):
         x = self.linear(x)
         x = F.relu(x)
         x = self.out(x)
-        # y = torch.tensor(27.9350)
-        # y.requires_grad = True
-        # x = x*0 +y
         return x
 
     # def num_flat_features(self, x):
@@ -192,6 +228,111 @@ class Pooling_Net(nn.Module):
         x = self.pad_pools[3](x)
         x = F.relu(self.c4(x))
         x = torch.cat((x, xo), 1)
+        return x
+
+
+class Pooling_Net_Res(nn.Module):
+    def __init__(self, name=None, n_pp=6, n_aggr=1, emb_sz=28, multi_loss=False):
+        super().__init__()
+        self.do = nn.Dropout(0.3)
+        self.c1 = nn.Conv1d(3 * emb_sz, 3 * emb_sz, 1)
+        if name is None:
+            name = "Pooling_Net_Res" + ("_multiL" if multi_loss else "")
+        self.pad_pools = nn.ModuleList([PadPoolLayer() for f in range(n_pp)])
+
+        self.c2 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c3 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c4 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c5 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c6 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+
+        self.aggregate = CombinedAdaptivePool(n_aggr)
+        self.linear = nn.Linear(2 * 3 * n_aggr * 28, 10)
+        self.out = nn.Linear(10, 1)
+        self.multi_loss = multi_loss
+        if self.multi_loss:
+            self.ctl = nn.Conv1d(38, 1, 1)
+
+        self.name = name
+
+    def forward(self, x):
+        x = self.do(x)
+        # embedding part
+        x_1 = self.embed(x)
+        x = self.aggregate(x_1)
+        # this is the postprocessing part
+        x = self.linear(x)
+        x = F.relu(x)
+        x = self.out(x)
+        if self.multi_loss and self.train:
+            return x, self.ctl(x_1)
+        else:
+            return x
+
+    def embed(self, x):
+        x = self.pad_pools[0](x)
+        xc = F.relu(self.c1(x))
+        x = xc + x
+        x = self.pad_pools[1](x)
+        xc = F.relu(self.c2(x))
+        x = xc + x
+        x = self.pad_pools[2](x)
+        xc = F.relu(self.c3(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        xc = F.relu(self.c4(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        xc = F.relu(self.c5(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        xc = F.relu(self.c6(x))
+        x = xc + x
+        return x
+
+
+class Pooling_Pre_Net_Res(nn.Module):
+    def __init__(self, name=None, n_pp=6, n_aggr=1, emb_sz=28, multi_loss=False):
+        super().__init__()
+        self.do = nn.Dropout(0.3)
+        self.c1 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        if name is None:
+            name = "Pooling_Pre_Net_Res" + ("_multiL" if multi_loss else "")
+        self.pad_pools = nn.ModuleList([PadPoolLayer() for f in range(n_pp)])
+
+        self.c2 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c3 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c4 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c5 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        self.c6 = nn.Conv1d(3 * emb_sz, 1, 1)
+        self.name = name
+
+        self.agg = nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, x):
+        x = self.do(x)
+        # embedding part
+        x = self.embed(x)
+        return self.agg(x)
+
+    def embed(self, x):
+        x = self.pad_pools[0](x)
+        xc = F.relu(self.c1(x))
+        x = xc + x
+        x = self.pad_pools[1](x)
+        xc = F.relu(self.c2(x))
+        x = xc + x
+        x = self.pad_pools[2](x)
+        xc = F.relu(self.c3(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        xc = F.relu(self.c4(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        xc = F.relu(self.c5(x))
+        x = xc + x
+        x = self.pad_pools[3](x)
+        x = self.c6(x)
         return x
 
 
