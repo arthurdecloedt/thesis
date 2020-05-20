@@ -233,7 +233,8 @@ class TS_validation_net_container():
             else:
                 self.dataset_b = dataset_b
 
-    def perform_ts_val(self, max_epochs, early_stopping=False, folds=10, f_skip=5, resultf=None, log_eval=True):
+    def perform_ts_val(self, max_epochs, early_stopping=False, folds=10, f_skip=5, resultf=None, log_eval=True,
+                       repeat=1):
         if early_stopping:
             lg.warning("early stopping not yet implemented")
         self.early_stopping = False
@@ -251,25 +252,33 @@ class TS_validation_net_container():
             valloader = torch.utils.data.DataLoader(self.dataset, batch_size=1, num_workers=3, sampler=val_sampler)
 
             crit = self.crit_c(*self.crit_arg)
-            net = self.net_c(*self.net_arg).double()
-            net: torch.nn.Module
-            resultf = "results_tsv_%s.p" % net.name
-            opt = self.optimizer_c(net.parameters(), *self.opt_arg)
-            s_writer = SummaryWriter()
-            cont = Net_Container(net, trainloader, opt, crit, True, valloader, vix=False,
-                                 plus=isinstance(net, embed_nets.PoolingNetPlus),
-                                 multiloss=hasattr(net, 'multi_loss') and net.multi_loss,
-                                 s_writer=s_writer)
-            lg.info("starting run %s", ind)
-            cont.train(epochs=max_epochs, supress_lg_info=True)
-            lg.info("run % finished, results:", ind)
-            ev_res = cont.evaluate(suffix="_tsv")
-            if log_eval:
-                for name, val in ev_res.items():
-                    lg.info("%s : %s", name, val)
-            self.results.append(ev_res)
-            with open(resultf, 'wb') as file:
-                pickle.dump(self.results, file)
+            temp_res = []
+            for r in range(repeat):
+                net = self.net_c(*self.net_arg).double()
+                net: torch.nn.Module
+                resultf = "results_tsv_%s.p" % net.name
+                opt = self.optimizer_c(net.parameters(), *self.opt_arg)
+                s_writer = SummaryWriter()
+                cont = Net_Container(net, trainloader, opt, crit, True, valloader, vix=False,
+                                     plus=isinstance(net, embed_nets.PoolingNetPlus),
+                                     multiloss=hasattr(net, 'multi_loss') and net.multi_loss,
+                                     s_writer=s_writer)
+                lg.info("starting run %s", ind)
+                cont.train(epochs=max_epochs, supress_lg_info=True)
+                lg.info("run % finished, results:", ind)
+                ev_res = cont.evaluate(suffix="_tsv")
+                # if log_eval:
+                #     for name, val in ev_res.items():
+                #         lg.info("%s : %s", name, val)
+                temp_res.append(ev_res)
+                # with open(resultf, 'wb') as file:
+                #     pickle.dump(self.results, file)
+            mins = dict.fromkeys(temp_res[0].keys(), math.inf)
+            for res in temp_res:
+                for k in mins:
+                    if mins[k] > res[k]:
+                        mins[k] = res[k]
+            self.results.append(mins)
         sums = dict.fromkeys(self.results[0].keys(), 0)
         for i, res in enumerate(self.results, 1):
             if log_eval:
@@ -329,13 +338,13 @@ class TS_validation_net_hyper():
         self.dataset_c = multiset_plus.MultiSetCombined(prefs, contig_resp=True)
         self.dataset_m = multiset_plus.MultiWrapper.construct(self.dataset_c)
 
-    def perform_run(self, folds, f_skip, max_epochs):
+    def perform_run(self, folds, f_skip, max_epochs, repeats=5):
 
         lg.info("performing hyper run")
         l = len(self.net_l)
-        folds_t = folds * l
+        folds_t = folds * l * repeats
         epochs_t = folds_t * max_epochs
-        lg.info("will perform %s validations, %s folds, %s epochs", l, folds_t, epochs_t)
+        lg.info("will perform %s validations, %s repeats %s folds, %s epochs", l, folds_t, epochs_t, repeats)
         for net in self.net_l:
             if hasattr(net.func, 'plus') and net.func.plus:
                 set = self.dataset_c
@@ -343,7 +352,7 @@ class TS_validation_net_hyper():
                 set = self.dataset_m
             tss_cont = TS_validation_net_container(set, net, self.crit_c, self.opt_c)
 
-            tss_cont.perform_ts_val(max_epochs, folds=folds, f_skip=f_skip)
+            tss_cont.perform_ts_val(max_epochs, folds=folds, f_skip=f_skip, repeat=repeats)
 
 # class Multi_Net_Container(Net_Container):
 #

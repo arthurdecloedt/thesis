@@ -9,9 +9,6 @@ nets:
   - - 'PoolingNetPlus'
     - null
     - null
-  - - 'PoolingNetPlus'
-    - null
-    - multi_loss: true
   - - 'AttNet'
     - null
     - null
@@ -24,16 +21,13 @@ nets:
   - - 'Pooling_Net'
     - null
     - null
-  - - 'Pooling_Net'
-    - null
-    - multi_loss: true
-
 crit:
-  - 'mse'
+  - 'huber'
   - null
 opt:
   - 'adam'
   - null
 folds: 10
+repeats: 5
 f_skip: 5
-epochs: 100
+epochs: 75
