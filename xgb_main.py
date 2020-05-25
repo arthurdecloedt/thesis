@@ -6,6 +6,7 @@ import warnings
 # noinspection PyUnresolvedReferences
 import mpl_toolkits.mplot3d
 import sklearn.linear_model as skl
+import sklearn as sk
 import xgboost
 import yaml
 from torch.utils.tensorboard import SummaryWriter
@@ -50,8 +51,8 @@ h_writer = SummaryWriter("hparam_part/hparam_xgb")
 # cont.train()
 # cont.cv_hyper_opt_bayesian(s_writer=writer,iterations=200,h_writer=h_writer,resname="xgb_bo_2.p")
 hyperparam_ranges = {'max_depth': (3, 8),
-                     'gamma': (0.001, 5),
-                     'lr': (0.0001, 1),
+                     'gamma': (0.001, 1.5),
+                     'lr': (0.0001, 0.3),
                      'drop': (0, .3)
                      }
 
@@ -62,11 +63,32 @@ cont.register_bo_tcv(hyperparam_ranges)
 #             "drop": (0,0.1)
 #         }
 # # )
-cont.reload_progress("xgb_bo_9_final.p")
-cont.cv_hyper_opt_bayesian(s_writer=writer, iterations=500, h_writer=h_writer, resname="xgb_bo_10_final.p")
+# cont.reload_progress("xgb_bo_10_final.p")
+# cont.cv_hyper_opt_bayesian(s_writer=writer, iterations=500, h_writer=h_writer, resname="xgb_bo_10_redo3.p")
+# cont.train()
 
-lg.info(cont.bo_results)
+# lg.info(cont.bo_results)
 writer.flush()
+x, y = cont.dataset.get_contig()
+
+dtrain = xgboost.DMatrix(data=x, label=y, nthread=2)
+
+prms = {
+     'booster': 'dart',
+    "max_depth": 11,
+#     "gamma": 0.6343837174116629,
+#     'learning_rate': 0.30840599405756164,
+#     'rate_drop': 0.098535117986459,
+#     'nthread': 34,
+     'eval_metric': ['rmse','mae']
+}
+folds = 5
+# # cv_result = xgboost.cv(prms, dtrain, 70, nfold=folds)
+tss = sk.model_selection.TimeSeriesSplit(5 * 2)
+
+cv_result = xgboost.cv(prms, dtrain, num_boost_round=1000, nfold=folds, folds=list(tss.split(x)),
+                   early_stopping_rounds=20,verbose_eval=True)
+print(cv_result)
 # cont.train()
 # f1,f2 = cont.create_figures(hyperparam_ranges,cont.bo)
 # writer.add_figure("predicted_function_scatter", f2, global_step=1)

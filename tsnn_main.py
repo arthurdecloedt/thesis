@@ -2,6 +2,7 @@ import logging as lg
 
 import yaml
 from torch import optim, nn
+from torch.utils.tensorboard import SummaryWriter
 
 from utils import container, embed_nets, multiset_plus
 
@@ -30,6 +31,12 @@ with open('resources/preferences.yaml') as f:
     lg.info("loading dataset")
 
 trainset = multiset_plus.MultiSetPlus(prefs, contig_resp=True)
+try:
+    trainset.log_embedding(SummaryWriter("embedding_mvso"))
+except Exception as error:
+    lg.warning("embedding failed")
+    lg.warning(error)
+
 cont = container.TS_validation_net_container(trainset, embed_nets.AttNet, nn.MSELoss, optim.Adam)
 
 cont.perform_ts_val(75, folds=10, f_skip=5)

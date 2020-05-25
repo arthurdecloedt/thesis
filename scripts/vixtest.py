@@ -24,3 +24,4 @@ arr = np.array([mom_array, vix_array])
 coef = np.corrcoef(arr)
 
 # autocor = np.corrcoef(np.array([vind[:1], vind[1:]]))
+vix_array = np.array(vix_array)

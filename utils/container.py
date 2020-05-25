@@ -37,11 +37,17 @@ class Net_Container:
             self.multi_loss = True
         assert (not validation) or val_loader is not None
         self.val_loader = val_loader
-        self.tensorboard = True
+        self.tensorboard = False
         if s_writer is None:
             self.tensorboard = False
         self.s_writer = s_writer
         self.vix = False
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.net.to(self.device)
+        self.lb = isinstance(net,embed_nets.Pooling_Net_Max)
+        self.dataloader.dataset.lookback = self.lb
+        if self.lb:
+            self.dataloader.dataset.n_l = self.net.n_regr
         if vix:
             if not self.dataloader.dataset.vix:
                 lg.error("tried to enable vix for a dataset without it")
@@ -50,7 +56,6 @@ class Net_Container:
 
     def evaluate(self, metrics=None, suffix=""):
         net = self.net
-
         net.eval()
         vlen = len(self.val_loader.__getattribute__('sampler'))
         preds_v = np.zeros((vlen,))
@@ -61,9 +66,12 @@ class Net_Container:
         truths_t = np.zeros(tlen)
 
         for i, data in enumerate(self.dataloader):
-            inputs, resp = data[0].double(), data[1].double()
+            inputs, resp = data[0].double().to(device=self.device), data[1].double().to(device=self.device)
+            if self.lb:
+                input2= data[3].double().to(device=self.device)
+                inputs = (inputs,input2)
             if self.plus:
-                plus_i = data[3].double()
+                plus_i = data[3].double().to(device=self.device)
                 output = net(inputs, plus_i)
             else:
                 output = net(inputs)
@@ -72,9 +80,13 @@ class Net_Container:
             preds_t[i] = output
             truths_t[i] = resp
         for i, data in enumerate(self.val_loader):
-            inputs, resp = data[0].double(), data[1].double()
+            inputs, resp = data[0].double().to(device=self.device), data[1].double().to(device=self.device)
+            if self.lb:
+                input2= data[3].double().to(device=self.device)
+                inputs = (inputs,input2)
+
             if self.plus:
-                plus_i = data[3].double()
+                plus_i = data[3].double().to(device=self.device)
                 output = net(inputs, plus_i)
             else:
                 output = net(inputs)
@@ -113,14 +125,21 @@ class Net_Container:
         # self.s_writer.add_histogram("ttl_multi_t", tot_truth)
         # self.s_writer.add_histogram("val_multi_p", preds_v)
         # self.s_writer.add_histogram("val_multi_t", truths_v)
+        autoregr = {}
 
         for name, fun in metrics.items():
             ev_res[name + '_train' + suffix] = fun(truths_t, preds_t)
             ev_res[name + '_val' + suffix] = fun(truths_v, preds_v)
             ev_res[name + '_ttl' + suffix] = fun(tot_truth, tot_pred)
+            ev_res[name + '_train_r_self' + suffix] = fun(truths_t[1:], truths_t[:-1])
+            ev_res[name + '_val_r_self' + suffix] = fun(truths_v[1:], truths_v[:-1])
+            ev_res[name + '_ttl_r_self' + suffix] = fun(tot_truth[1:], tot_truth[:-1])
+
         return ev_res
 
     def train(self, epochs, load_best=True, supress_lg_info=False):
+        print(self.dataloader.dataset.lookback)
+
         net = self.net
         median = torch.tensor(self.dataloader.dataset.baselines[1])
         median_loss = 0.0
@@ -139,9 +158,13 @@ class Net_Container:
             net.train()
             self.optimizer.zero_grad()
             for i, data in enumerate(self.dataloader, 0):
-                inputs, resp = data[0].double(), data[1].double()
-                if self.plus:
-                    plus_i = data[3].double()
+                inputs, resp = data[0].double().to(device=self.device), data[1].double().to(device=self.device)
+                if self.lb:
+                    input2 = data[3].double().to(device=self.device)
+                    outputs = net((inputs, input2))
+
+                elif self.plus:
+                    plus_i = data[3].double().to(device=self.device)
                     outputs = net(inputs, plus_i)
                 else:
                     outputs = net(inputs)
@@ -170,11 +193,15 @@ class Net_Container:
                 # with torch.no_grad():
                 for i, data in enumerate(self.val_loader, 0):
                     if self.vix:
-                        inputs, resp, vix = data[0].double(), data[1].double(), data[2].double()
+                        inputs, resp, vix = data[0].double().to(device=self.device), data[1].double().to(device=self.device), data[2].double()
                     else:
-                        inputs, resp = data[0].double(), data[1].double()
+                        inputs, resp = data[0].double().to(device=self.device), data[1].double().to(device=self.device)
+                    if self.lb:
+                        input2 = data[3].double().to(device=self.device)
+                        inputs = (inputs, input2)
+
                     if self.plus:
-                        plus_i = data[3].double()
+                        plus_i = data[3].double().to(device=self.device)
                         outputs = net(inputs, plus_i)
                         if self.multi_loss:
                             outputs = outputs[0]
@@ -261,8 +288,8 @@ class TS_validation_net_container():
         for ind, (train_sampler, val_sampler) in enumerate(sampler_gen.get_samplers(), 1):
             lg.info('initializing run %s', ind)
             trainloader = torch.utils.data.DataLoader(self.dataset_b if self.binned else self.dataset, batch_size=1,
-                                                      num_workers=3, sampler=train_sampler)
-            valloader = torch.utils.data.DataLoader(self.dataset, batch_size=1, num_workers=3, sampler=val_sampler)
+                                                      num_workers=1, sampler=train_sampler)
+            valloader = torch.utils.data.DataLoader(self.dataset, batch_size=1, num_workers=1, sampler=val_sampler)
 
             crit = self.crit_c(*self.crit_arg)
             temp_res = []
@@ -342,9 +369,13 @@ class TS_validation_net_hyper():
         else:
             self.crit_c = torch.nn.MSELoss
         if 'opt' in prefs:
-            self.opt_c = opts[prefs['opt'][0]]
+            opt_args_pos = prefs['opt'][1] if prefs['opt'][1] is not None else ()
+            opt_args_named = prefs['opt'][2] if prefs['opt'][2] is not None else {}
+            assert isinstance(opt_args_pos, tuple) and isinstance(opt_args_named, dict)
+
+            self.opt_c = partial(opts[prefs['opt'][0]],*opt_args_pos, **opt_args_named)
         else:
-            self.opt_c = torch.optim.SGD
+            self.opt_c = partial(torch.optim.SGD,0.001)
         self.net_l = []
         for net in prefs['nets']:
             net_c = getattr(embed_nets, net[0])

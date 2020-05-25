@@ -6,20 +6,19 @@ moments: 'resources/AAPL_ImpliedMoments'
 vxaapl: 'resources/vixaapl.csv'
 vix: 'resources/vixcurrent.csv'
 nets:
-  - - 'Pooling_Pre_Net_Res'
+  - - 'Pooling_Net_Res_GN'
     - null
-    - null
-  - - 'Pooling_Net_Res'
-    - null
-    - null
+    - n_pp : 5
+      n_regr : 4
 crit:
   - 'huber'
   - null
 opt:
-  - 'adamw'
+  - 'adam'
+  - null
   - null
 folds: 10
-repeats: 5
+repeats: 1
 f_skip: 5
-epochs: 100
-resultf: "corr_run_res"
+epochs: 2
+resultf: "run_autocorr"

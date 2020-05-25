@@ -13,6 +13,7 @@ import yaml
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import traceback
 
 
 # this class is a small container with some parts of a multiset,
@@ -78,10 +79,14 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
         vxaapl = vxaapl[dind]
 
         vix_array = vix_array[vind]
-        min = np.min(vxaapl)
-        vxaapl = vxaapl - min
-        quant90 = np.quantile(vxaapl, 0.9)
-        vxaapl = vxaapl / quant90
+        if False:
+            min = np.min(vxaapl)
+            vxaapl = vxaapl - min
+            quant90 = np.quantile(vxaapl, 0.9)
+            vxaapl = vxaapl / quant90
+        else:
+            min=0
+            quant90 = 1
         lg.info("performed rescale: (vxaapl - %d ) / %d", min, quant90)
 
         lg.info("mean response: %s, median response: %s", np.mean(vxaapl), np.median(vxaapl))
@@ -114,6 +119,8 @@ class MultiSet(Dataset):
         self.contig_resp = None
         self.has_contig = contig_resp
         self.prefs = prefs
+        self.lookback=False
+        self.n_l = 4
         preembedfolder = prefs['preembedfolder']
         jsonfile = prefs['jsonfile']
         lg.info('Starting initialization and preprocessing of multimodal dataset')
@@ -141,7 +148,7 @@ class MultiSet(Dataset):
             self.date_arr = self.date_arr[np.invert(np.isin(self.date_arr, vals))]
             lg.info("rejected %s dates for size (cutoff was 10)", ttl)
         # initialize array
-        self.resp_arr = np.full(self.date_arr.shape, -1.)
+        self.resp_arr = np.full(self.date_arr.shape, .64)
 
         # if we want the vix we have to parse it specially
         if self.vix:
@@ -350,7 +357,7 @@ class MultiSet(Dataset):
     # it embeds them in pluchik emotions according to an embedding by MVSO project
     def process_anps(self, vals):
         lg.debug("starting ANP data processing")
-        top_nr = 5
+        top_nr = 7
         anp_file_n = self.prefs['anp_file_n']
         em_file_n = self.prefs['em_file_n']
         classes = np.array(json.load(open(anp_file_n)))
@@ -362,6 +369,7 @@ class MultiSet(Dataset):
             # skip first line
             next(reader)
             a = 0
+            unfound=[]
             for row in reader:
                 name = row[0]
                 vals_loc = [float(f) for f in row[1:]]
@@ -370,6 +378,8 @@ class MultiSet(Dataset):
                 # check if ANP in class (some arent)
                 if loc.shape != (0,):
                     ems[loc[0]] = num_vals
+                # else:
+                #     unfound.append(loc[0])
                 # else:
                 #     lg.warning("found a ANP emotional embedding (%s) not in classes nr %s", name,a)
                 #     a+=1
@@ -381,12 +391,17 @@ class MultiSet(Dataset):
 
         for n in range(len(vals)):
             # we select the top_nr highest scoring ANP's for this sample
-            top_inds = np.argpartition(vals[n], ind)[ind:]
+            # assumption is that there are not a lot of unfound ANP's
+            ind_n = ind
+            while not np.any(proc_val[n]):
+                top_inds = np.argpartition(vals[n], ind_n)[ind_n:]
 
-            # we sum the value
-            proc_val[n] = np.sum(ems[top_inds], axis=0)
-            # for ti in top_inds:
-            #     proc_val[n] += ems[ti]
+                # we sum the value
+                for ti in top_inds:
+                    # if ti not in unfound:
+                    proc_val[n] += ems[ti]
+                ind_n += ind
+            proc_val[n] = proc_val[n] / np.max(proc_val[n])
         return proc_val
 
     def __len__(self):
@@ -400,7 +415,8 @@ class MultiSet(Dataset):
         lg.debug("getting item: %s", index)
         date = self.date_arr[index]
         # lg.debug(date)
-
+        # print(self.lookback)
+        # traceback.print_stack()
         # we look for the left and side for this date to appear,
         # this is done by a binary search because the data is sorted
         ind_0 = np.searchsorted(self.contig_dates, date, side="left")
@@ -414,6 +430,20 @@ class MultiSet(Dataset):
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
         resp_t = torch.tensor(self.resp_arr[index])
+        if self.lookback:
+            l = self.n_l
+            resp_lb_n = np.zeros(l)
+            if index == 0:
+                pass
+            elif index < l:
+                resp_lb_n[-index:] = self.resp_arr[:index]
+            else:
+                resp_lb_n = self.resp_arr[index-l:index]
+            for a in range(l):
+                if resp_lb_n[a] <= 0:
+                    resp_lb_n[a] = self.baselines[-1]
+            resp_lb_t = torch.tensor(resp_lb_n)
+            return data_tens, resp_t, torch.tensor(0) , resp_lb_t
         if self.vix:
             vix_t = torch.tensor(self.vix_arr[index])
             return data_tens, resp_t, vix_t
@@ -421,14 +451,21 @@ class MultiSet(Dataset):
         return data_tens, resp_t, None
 
     # write embedding down for other embedding experiment
-    def log_embedding(self, writer: SummaryWriter, dim=5000):
+    def log_embedding(self, writer: SummaryWriter, dim=2000):
 
         assert self.has_contig
-        vals = self.contig_vals[self.contig_usable][:dim]
-        vals = vals.transpose((1, 0))
+        inds = np.random.randint(20000,size=dim)
+
+        vals = self.contig_vals[self.contig_usable][inds]
+        resps = self.contig_resp[self.contig_usable][inds]
+
+        bins = np.histogram_bin_edges(resps,25)
+        resps = np.digitize(resps,bins)
+        resps_s = list(resps)
+        # vals = vals.transpose((1, 0))
         data_tens = torch.from_numpy(vals)
 
-        writer.add_embedding(data_tens, global_step=0, tag='MVSO_top5_avg')
+        writer.add_embedding(data_tens, global_step=4, tag='MVSO_top5_avg',metadata=resps_s)
         writer.flush()
 
     # get the contig data for this dataset, used in SK_Containers

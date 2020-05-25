@@ -49,22 +49,25 @@ class SK_container:
                          iters=100):
 
         bayes_opt = self.bo
-        lg.info("initializing Bayesian Optimization with 5 points")
-        bayes_opt.maximize(n_iter=0, init_points=5)
+        lg.info("initializing Bayesian Optimization with 10 points")
+        bayes_opt.maximize(n_iter=0, init_points=10)
         #
         # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
         #
         # s_writer.add_figure("predicted_function_scatter", fig2, global_step=0)
         # s_writer.add_figure("predicted_function", fig, global_step=0)
+        lg.info("bayesopt initialized")
         n = int(ceil(iters / 10))
         for a in range(n):
-            bayes_opt.maximize(n_iter=10, init_points=1)
+            bayes_opt.maximize(n_iter=9, init_points=1)
             # fig, fig2 = self.create_figures(hyperparam_ranges, bayes_opt)
 
             # s_writer.add_figure("predicted_function_scatter", fig2, global_step=a + 1)
             # s_writer.add_figure("predicted_function", fig, global_step=a + 1)
             s_writer.flush()
             self.bo_points = bayes_opt.res
+            if self.bo_results != bayes_opt.max or a % 5 == 0:
+                lg.info(bayes_opt.max)
             self.bo_results = bayes_opt.max
             with open(resname, 'wb') as file:
                 pickle.dump(self.bo_points, file)
@@ -200,8 +203,9 @@ class XG_Container(SK_container):
                 "gamma": gamma,
                 'learning_rate': lr,
                 'rate_drop': drop,
-                'nthread': 34,
-                'eval_metric': 'rmse'
+                'nthread': 9,
+                'eval_metric': 'rmse',
+                'tree_method' : 'gpu_hist'
             }
 
             # cv_result = xgb.cv(prms, dtrain, 70, nfold=folds)
@@ -212,7 +216,6 @@ class XG_Container(SK_container):
 
             # Return the negative MSE
             rmse = cv_result['test-rmse-mean'].iloc[-1]
-            h_writer.add_hparams(prms, {'RMSE': rmse})
             return -1. * rmse
 
         super().register_bo(hyperparam_ranges, bo_tune_xgb)

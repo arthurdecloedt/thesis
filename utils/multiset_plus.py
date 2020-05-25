@@ -37,6 +37,15 @@ class MultiWrapper(MultiSet):
             return getattr(self.inner, attr)
         return super().__getattr__(attr)
 
+    @property
+    def lookback(self):
+        return self.inner.lookback
+
+    @lookback.setter
+    def lookback(self, val):
+        self.inner.lookback=val
+
+
     def __getitem__(self, index):
         return self.inner._get_multi_only(index)
 

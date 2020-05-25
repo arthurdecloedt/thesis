@@ -136,6 +136,28 @@ class Pre_net(nn.Module):
         x = self.c4(x)
         x = self.avg_pool(x)
         return x
+class Pre_net_res(nn.Module):
+
+    def __init__(self, name="Pre_Net",n_pp=5):
+        super().__init__()
+        self.do = nn.Dropout(0.3)
+
+        self.res_layers = nn.ModuleList([nn.Conv1d(28,28,1) for f in range(2*n_pp)])
+        self.n_pp = n_pp
+        self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
+        self.name = name
+
+    # resnet like residual connections
+    def forward(self, x):
+        x = self.do(x)
+        for a in range(self.n_pp):
+          xc = self.res_layers[a*2](x)
+          xc = F.relu(xc)
+          xc = self.res_layers[a*2+1](xc)
+          x = torch.add(x, xc)
+          x = F.relu(x)
+        x = self.avg_pool(x)
+        return x
 
 
 # this layer performs a combined avg and max pool operation
@@ -232,22 +254,15 @@ class Pooling_Net(nn.Module):
 
 
 class Pooling_Net_Res(nn.Module):
-    def __init__(self, name=None, n_pp=6, n_aggr=1, emb_sz=28, multi_loss=False):
+    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False):
         super().__init__()
         self.do = nn.Dropout(0.3)
         self.c1 = nn.Conv1d(3 * emb_sz, 3 * emb_sz, 1)
         if name is None:
-            name = "Pooling_Net_Res" + ("_multiL" if multi_loss else "")
-        self.pad_pools = nn.ModuleList([PadPoolLayer() for f in range(n_pp)])
-
-        self.c2 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c3 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c4 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c5 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c6 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-
+            name = "Pooling_Net_Res_%s"%emb_sz + ("_multiL" if multi_loss else "")
+        self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block(emb_sz) for f in range(n_pp)])
         self.aggregate = CombinedAdaptivePool(n_aggr)
-        self.linear = nn.Linear(2 * 3 * n_aggr * 28, 10)
+        self.linear = nn.Linear(2 * n_aggr * 28, 10)
         self.out = nn.Linear(10, 1)
         self.multi_loss = multi_loss
         if self.multi_loss:
@@ -270,41 +285,71 @@ class Pooling_Net_Res(nn.Module):
             return x
 
     def embed(self, x):
-        x = self.pad_pools[0](x)
-        xc = F.relu(self.c1(x))
-        x = xc + x
-        x = self.pad_pools[1](x)
-        xc = F.relu(self.c2(x))
-        x = xc + x
-        x = self.pad_pools[2](x)
-        xc = F.relu(self.c3(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        xc = F.relu(self.c4(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        xc = F.relu(self.c5(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        xc = F.relu(self.c6(x))
-        x = xc + x
+        for layer in self.res_blocks:
+            x = layer(x)
         return x
 
+class Pooling_Net_Max(Pooling_Net_Res):
+    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False,n_regr=4):
+        super().__init__(name, n_pp, n_aggr, emb_sz, multi_loss)
+        self.n_regr=n_regr
+        self.linear_2 = nn.Linear(10+n_regr,10)
+    def forward(self, input):
+        x, m = input
+        x = self.embed(x)
+        x = self.aggregate(x)
+        x = self.linear(x)
+        x = F.relu(x)
+        x = torch.cat((x,m.squeeze()))
+        x = F.relu(self.linear_2(x))
+        return self.out(x)
+
+class Pad_Pool_Res_Block(nn.Module):
+
+    def __init__(self,sz):
+        super().__init__()
+        self.c1 = nn.Conv1d(3 * sz, sz, 1)
+        self.pp = PadPoolLayer()
+        self.c2 = nn.Conv1d(sz, sz, 1)
+
+
+    def forward(self, x):
+        x_p = self.pp(x)
+        xc = F.relu(self.c1(x_p))
+        xc = self.c2(xc)
+        x = xc + x
+        return F.relu(x)
+
+class Pad_Pool_Res_Block_GN(Pad_Pool_Res_Block):
+
+    def __init__(self, sz=28,groups=4):
+        super().__init__(sz)
+        self.gn = nn.GroupNorm(groups,sz)
+
+    def forward(self, x):
+        x_p = self.pp(x)
+        xc = F.relu(self.c1(x_p))
+        xc = self.gn(xc)
+        xc = self.c2(xc)
+        x = xc + x
+        return F.relu(x)
+
+class Pooling_Net_Res_GN(Pooling_Net_Res):
+
+    def __init__(self, name=None, n_pp=5, n_aggr=1, emb_sz=28, multi_loss=False,gn_groups=4):
+        super().__init__(name, 0, n_aggr, emb_sz, multi_loss)
+        self.res_blocks = self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block_GN(emb_sz,gn_groups) for f in range(n_pp)])
 
 class Pooling_Pre_Net_Res(nn.Module):
-    def __init__(self, name=None, n_pp=6, n_aggr=1, emb_sz=28, multi_loss=False):
+    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False):
         super().__init__()
         self.do = nn.Dropout(0.3)
-        self.c1 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
+        # self.c1 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
         if name is None:
             name = "Pooling_Pre_Net_Res" + ("_multiL" if multi_loss else "")
-        self.pad_pools = nn.ModuleList([PadPoolLayer() for f in range(n_pp)])
-
-        self.c2 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c3 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c4 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c5 = nn.Conv1d(3 * emb_sz, emb_sz, 1)
-        self.c6 = nn.Conv1d(3 * emb_sz, 1, 1)
+        self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block(emb_sz) for layer in range(n_pp)])
+        self.ppout= PadPoolLayer()
+        self.cout = nn.Conv1d(3 * emb_sz, 1, 1)
         self.name = name
 
         self.agg = nn.AdaptiveAvgPool1d(1)
@@ -316,23 +361,10 @@ class Pooling_Pre_Net_Res(nn.Module):
         return self.agg(x)
 
     def embed(self, x):
-        x = self.pad_pools[0](x)
-        xc = F.relu(self.c1(x))
-        x = xc + x
-        x = self.pad_pools[1](x)
-        xc = F.relu(self.c2(x))
-        x = xc + x
-        x = self.pad_pools[2](x)
-        xc = F.relu(self.c3(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        xc = F.relu(self.c4(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        xc = F.relu(self.c5(x))
-        x = xc + x
-        x = self.pad_pools[3](x)
-        x = self.c6(x)
+        for block in self.res_blocks:
+            x = block(x)
+        x_p = self.ppout(x)
+        x = self.cout(x_p)
         return x
 
 
