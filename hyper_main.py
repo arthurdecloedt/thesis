@@ -32,4 +32,4 @@ with open('resources/preferences.yaml') as f:
 
 hyper_cont = container.TS_validation_net_hyper(prefs)
 
-# hyper_cont.perform_run(prefs['folds'], prefs['f_skip'], prefs['epochs'], repeats=prefs['repeats'])
+hyper_cont.perform_run(prefs['folds'], prefs['f_skip'], prefs['epochs'], repeats=prefs['repeats'])

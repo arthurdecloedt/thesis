@@ -145,8 +145,8 @@ class lr_Container(SK_container):
         writer.add_histogram("total/pred", totalpredict)
         writer.add_histogram("val/pred", valpredict)
         writer.add_histogram("train/pred", trainpredict)
-        # xgb.plot_importance(self.regressor)
-        # fig = plt.gcf()
+        xgb.plot_importance(self.regressor)
+        fig = plt.gcf()
         # # fig2.add_subplot(xgb.plot_tree(self.xgb,num_trees=5))
         #
         # writer.add_figure("importance", fig)
@@ -162,6 +162,26 @@ class lr_Container(SK_container):
         lg.info("val   mse loss: %s", msev)
         lg.info("train mse loss: %s", msetr)
 
+    def tcv_eval(self,folds=10,f_skip=5,writer=SummaryWriter()):
+        tss = sk.model_selection.TimeSeriesSplit(folds)
+        x, y = self.dataset.get_contig()
+        m_list = np.zeros((folds-f_skip,3))
+        for i, (train_i, test_i) in enumerate(tss.split(x)):
+            if i < f_skip:
+                continue
+            regressor = self.regressor
+            regressor.fit(x[train_i], y[train_i])
+            pred = regressor.predict(x[test_i])
+            truth = y[test_i]
+            mse = sk.metrics.mean_squared_error(truth, pred)
+            mae = sk.metrics.mean_absolute_error(truth,pred)
+            rmse = sk.metrics.mean_squared_error(truth, pred,squared=False)
+            m_list[i-f_skip,:]= [mse,rmse,mae]
+            lg.info("val   mse loss: %s", mse)
+            lg.info("val  rmse loss: %s", rmse)
+            lg.info("val   mae loss: %s", mae)
+
+        return m_list
 
 class XG_Container(SK_container):
     regressor: xgb.XGBRegressor

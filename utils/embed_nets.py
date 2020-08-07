@@ -1,8 +1,11 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
+from torch.nn.parameter import Parameter
+from torch.nn import init
+from torch.nn.modules.utils import _single
 # These networks and concepts are better explained in my master thesis,
 # in the chapters Methods,  and Experiment: Deep Learning
 
@@ -136,13 +139,15 @@ class Pre_net(nn.Module):
         x = self.c4(x)
         x = self.avg_pool(x)
         return x
+
+
 class Pre_net_res(nn.Module):
 
-    def __init__(self, name="Pre_Net",n_pp=5):
+    def __init__(self, name="Pre_Net", n_pp=5):
         super().__init__()
         self.do = nn.Dropout(0.3)
 
-        self.res_layers = nn.ModuleList([nn.Conv1d(28,28,1) for f in range(2*n_pp)])
+        self.res_layers = nn.ModuleList([nn.Conv1d(28, 28, 1) for f in range(2 * n_pp)])
         self.n_pp = n_pp
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         self.name = name
@@ -151,11 +156,11 @@ class Pre_net_res(nn.Module):
     def forward(self, x):
         x = self.do(x)
         for a in range(self.n_pp):
-          xc = self.res_layers[a*2](x)
-          xc = F.relu(xc)
-          xc = self.res_layers[a*2+1](xc)
-          x = torch.add(x, xc)
-          x = F.relu(x)
+            xc = self.res_layers[a * 2](x)
+            xc = F.relu(xc)
+            xc = self.res_layers[a * 2 + 1](xc)
+            x = torch.add(x, xc)
+            x = F.relu(x)
         x = self.avg_pool(x)
         return x
 
@@ -259,7 +264,7 @@ class Pooling_Net_Res(nn.Module):
         self.do = nn.Dropout(0.3)
         self.c1 = nn.Conv1d(3 * emb_sz, 3 * emb_sz, 1)
         if name is None:
-            name = "Pooling_Net_Res_%s"%emb_sz + ("_multiL" if multi_loss else "")
+            name = "Pooling_Net_Res_%s" % emb_sz + ("_multiL" if multi_loss else "")
         self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block(emb_sz) for f in range(n_pp)])
         self.aggregate = CombinedAdaptivePool(n_aggr)
         self.linear = nn.Linear(2 * n_aggr * 28, 10)
@@ -289,29 +294,74 @@ class Pooling_Net_Res(nn.Module):
             x = layer(x)
         return x
 
+
 class Pooling_Net_Max(Pooling_Net_Res):
-    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False,n_regr=4):
+    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False, n_regr=4):
         super().__init__(name, n_pp, n_aggr, emb_sz, multi_loss)
-        self.n_regr=n_regr
-        self.linear_2 = nn.Linear(10+n_regr,10)
+        self.n_regr = n_regr
+        self.linear_2 = nn.Linear(10 + n_regr, 10)
+
     def forward(self, input):
         x, m = input
         x = self.embed(x)
         x = self.aggregate(x)
         x = self.linear(x)
         x = F.relu(x)
-        x = torch.cat((x,m.squeeze()))
+        x = torch.cat((x, m.squeeze()))
         x = F.relu(self.linear_2(x))
         return self.out(x)
 
+
+class Pooling_Net_Max_lReturns(Pooling_Net_Max):
+    def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False, n_regr=4):
+        super().__init__(name, n_pp, n_aggr, emb_sz, multi_loss)
+        self.n_regr = n_regr
+        self.linear_2 = nn.Linear(10 + n_regr, 10)
+        self.out=nn.Linear(10+n_regr,10)
+    def forward(self, input):
+        return F.softmax(super().forward(input))
+
+class sym_conv1d(nn.Module):
+
+    def __init__(self,in_channels: int, out_channels: int,kernel_size: int,padding_mode:str,padding:int):
+        super().__init__()
+        if (kernel_size - 1 ) % 3 != 0:
+            raise ValueError("Kernel size of a symmetric convolution must be odd")
+        if padding_mode not in {'zeros', 'reflect', 'replicate', 'circular'}:
+            raise ValueError("illegal padding_mode specified: %s"%padding_mode)
+        self.padding_mode = padding_mode
+        self.padding = padding
+        self._reversed_padding_repeated_twice = tuple(x for x in reversed(self.padding) for _ in range(2))
+
+        self.center_weights = Parameter(torch.Tensor(in_channels, out_channels,1))
+        self.side_weights = Parameter(torch.tensor(in_channels,out_channels,(kernel_size-1)/2))
+        self.bias = Parameter(torch.Tensor(out_channels))
+        self.reset_parameters()
+    def reset_parameters(self) -> None:
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in)
+            init.uniform_(self.bias, -bound, bound)
+
+
+    def forward(self,x):
+        other_side = torch.flip(-1)
+        full_weights = torch.cat([self.side_weights,self.center_weights,other_side])
+        if self.padding_mode != 'zeros':
+            return F.conv1d(F.pad(x, self._reversed_padding_repeated_twice, mode=self.padding_mode),
+                            full_weights, self.bias, 0,
+                            _single(0))
+        return F.conv1d(input, self.weight, self.bias)
+
+
 class Pad_Pool_Res_Block(nn.Module):
 
-    def __init__(self,sz):
+    def __init__(self, sz):
         super().__init__()
         self.c1 = nn.Conv1d(3 * sz, sz, 1)
         self.pp = PadPoolLayer()
         self.c2 = nn.Conv1d(sz, sz, 1)
-
 
     def forward(self, x):
         x_p = self.pp(x)
@@ -320,11 +370,12 @@ class Pad_Pool_Res_Block(nn.Module):
         x = xc + x
         return F.relu(x)
 
+
 class Pad_Pool_Res_Block_GN(Pad_Pool_Res_Block):
 
-    def __init__(self, sz=28,groups=4):
+    def __init__(self, sz=28, groups=4):
         super().__init__(sz)
-        self.gn = nn.GroupNorm(groups,sz)
+        self.gn = nn.GroupNorm(groups, sz)
 
     def forward(self, x):
         x_p = self.pp(x)
@@ -334,11 +385,14 @@ class Pad_Pool_Res_Block_GN(Pad_Pool_Res_Block):
         x = xc + x
         return F.relu(x)
 
+
 class Pooling_Net_Res_GN(Pooling_Net_Res):
 
-    def __init__(self, name=None, n_pp=5, n_aggr=1, emb_sz=28, multi_loss=False,gn_groups=4):
+    def __init__(self, name=None, n_pp=5, n_aggr=1, emb_sz=28, multi_loss=False, gn_groups=4):
         super().__init__(name, 0, n_aggr, emb_sz, multi_loss)
-        self.res_blocks = self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block_GN(emb_sz,gn_groups) for f in range(n_pp)])
+        self.res_blocks = self.res_blocks = nn.ModuleList(
+            [Pad_Pool_Res_Block_GN(emb_sz, gn_groups) for f in range(n_pp)])
+
 
 class Pooling_Pre_Net_Res(nn.Module):
     def __init__(self, name=None, n_pp=10, n_aggr=1, emb_sz=28, multi_loss=False):
@@ -348,7 +402,7 @@ class Pooling_Pre_Net_Res(nn.Module):
         if name is None:
             name = "Pooling_Pre_Net_Res" + ("_multiL" if multi_loss else "")
         self.res_blocks = nn.ModuleList([Pad_Pool_Res_Block(emb_sz) for layer in range(n_pp)])
-        self.ppout= PadPoolLayer()
+        self.ppout = PadPoolLayer()
         self.cout = nn.Conv1d(3 * emb_sz, 1, 1)
         self.name = name
 
@@ -460,3 +514,5 @@ class AttNet(nn.Module):
         x = self.agg(x)
         x = F.relu(self.hidden(x))
         return self.out(x)
+
+

@@ -45,7 +45,9 @@ class Net_Container:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
         self.lb = isinstance(net,embed_nets.Pooling_Net_Max)
+        self.lreturns = isinstance(net,embed_nets.Pooling_Net_Max_lReturns)
         self.dataloader.dataset.lookback = self.lb
+        self.dataloader.dataset.lretruns = self.lreturns
         if self.lb:
             self.dataloader.dataset.n_l = self.net.n_regr
         if vix:

@@ -55,13 +55,24 @@ def parse_moments(momentfile, rescale=False):
 
 
 # parse data from cboe source, this will shift data so that we are predicting the next day iv
-def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shift=0):
+def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shift=0,movement=False):
     vxaapl = pd.read_csv(aaplfile, index_col=0, usecols=[0, 4], parse_dates=True).dropna()
     lg.info("Using cboe vxAAPL data")
 
     dates = vxaapl.index.to_pydatetime()
     dates_np = np.array([np.datetime64(d.date()) for d in dates])
     vxaapl = vxaapl[vxaapl.columns[0]].to_numpy()
+
+    # calculating changes in vix, using log for possible summability
+    mult_change = vxaapl[shift:] / vxaapl[:-shift]
+    mult_change = np.log(mult_change)
+    mult_change_std = np.std(mult_change)
+    mult_change_mean = np.nanmean(mult_change)
+    classes = np.ones((vxaapl.shape[0],))
+    classes = np.where(mult_change < mult_change_mean - mult_change_std/4,0,classes)
+    classes = np.where(mult_change > mult_change_mean + mult_change_std/4,2,classes)
+    classes_one_hot = np.zeros((classes.size, classes.max()+1))
+    classes_one_hot[np.arange(classes.size),classes] = 1
     # we want to predict the vxaapl of the next day
     if lvix:
         vix = pd.read_csv(vixfile, index_col=0, usecols=[0, 4], parse_dates=True).dropna()
@@ -77,9 +88,10 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
         dind = dind[:-max(shift, vix_shift)] + shift
         i_dates = i_dates[:-max(shift, vix_shift)]
         vxaapl = vxaapl[dind]
-
+        classes_one_hot = classes_one_hot[dind]
         vix_array = vix_array[vind]
-        if False:
+
+        if rescale:
             min = np.min(vxaapl)
             vxaapl = vxaapl - min
             quant90 = np.quantile(vxaapl, 0.9)
@@ -91,7 +103,9 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
 
         lg.info("mean response: %s, median response: %s", np.mean(vxaapl), np.median(vxaapl))
 
-        return i_dates, vxaapl, 1, (np.mean(vxaapl), np.median(vxaapl)), vix_array, (min, quant90)
+        ret =(i_dates, vxaapl, 1, (np.mean(vxaapl), np.median(vxaapl)), vix_array, (min, quant90))
+
+        return (*ret , classes_one_hot ) if movement else ret
     # vxaapldiff = vxaapl[1:] - vxaapl[:-1]
     else:
         dates_np = dates_np[:-shift]
@@ -112,7 +126,9 @@ def parse_vix(aaplfile, rescale=False, shift=1, lvix=False, vixfile='', vix_shif
 # multithreaded
 class MultiSet(Dataset):
 
-    def __init__(self, prefs, contig_resp=False):
+    def __init__(self, prefs, contig_resp=False,movement=True):
+        self.movement = movement
+        self._lreturns = False
         self.vix_arr = None
         self.vix = True
         self.contig_dates = np.array([])
@@ -152,10 +168,14 @@ class MultiSet(Dataset):
 
         # if we want the vix we have to parse it specially
         if self.vix:
-            response_dates, response, self.scale, self.baselines, vix_arr, self.scaling = parse_vix(
-                self.prefs['vxaapl'], False, lvix=True, vixfile=self.prefs['vix'])
-            # we can only use days where we have both input and response (response might be shifted)
+            resp = parse_vix(self.prefs['vxaapl'], False, lvix=True, vixfile=self.prefs['vix'],movement=self.movement)
+            response_dates, response, self.scale, self.baselines, vix_arr, self.scaling = resp[6:]
             _, d_inds, r_inds = np.intersect1d(self.date_arr, response_dates, return_indices=True)
+
+            if self.movement:
+                self.classes = np.zeros(self.resp_arr.shape)
+                self.classes[d_inds] = resp[-1][r_inds]
+            # we can only use days where we have both input and response (response might be shifted)
             self.vix_arr = np.full(self.date_arr.shape, -1.)
 
             self.vix_arr[d_inds] = vix_arr[r_inds]
@@ -203,6 +223,17 @@ class MultiSet(Dataset):
         n_train = int(l * distr)
         indices = np.arange(l)
         self.training_idx, self.test_idx = indices[:n_train], indices[n_train:]
+
+    @property
+    def lreturns(self):
+        return self._lreturns
+
+    @lreturns.setter
+    def lreturns(self,val:bool):
+        if val and not self.movement:
+            lg.error("Tried to enable log return classification mode for dataset not initialized with these returns")
+            raise ValueError("Tried to enable log return classification mode for dataset not initialized with these returns")
+        self._lreturns = val
 
     # saves a contig version of a model
     def save_contig(self, path='/data/leuven/332/vsc33219/data/Multiset'):
@@ -429,7 +460,7 @@ class MultiSet(Dataset):
         data = self.contig_vals[ind_0:ind_n]
         data = data.transpose((1, 0))
         data_tens = torch.from_numpy(data)
-        resp_t = torch.tensor(self.resp_arr[index])
+        resp_t = torch.tensor(self.resp_arr[index]) if not self._lreturns else torch.tensor(self.classes[index])
         if self.lookback:
             l = self.n_l
             resp_lb_n = np.zeros(l)

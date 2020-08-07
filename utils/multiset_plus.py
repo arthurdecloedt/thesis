@@ -45,6 +45,14 @@ class MultiWrapper(MultiSet):
     def lookback(self, val):
         self.inner.lookback=val
 
+    @property
+    def lreturns(self):
+        return self.inner.lreturns
+
+    @lreturns.setter
+    def lreturns(self,val:bool):
+        self.inner.lreturns=val
+
 
     def __getitem__(self, index):
         return self.inner._get_multi_only(index)
