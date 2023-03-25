@@ -1,4 +1,4 @@
-# Master Thesis: Multimodal Tweet Sentiment for ImpliedVolatility Predictions
+# Master Thesis: Multimodal Tweet Sentiment for Implied Volatility Predictions
 
 This repository contains code for my master thesis project
 
